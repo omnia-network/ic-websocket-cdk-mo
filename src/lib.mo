@@ -1,25 +1,24 @@
+import Array "mo:base/Array";
 import Blob "mo:base/Blob";
-import Text "mo:base/Text";
-import Result "mo:base/Result";
-import Nat64 "mo:base/Nat64";
-import Time "mo:base/Time";
-import HashMap "mo:base/HashMap";
+import CertifiedData "mo:base/CertifiedData";
 import Deque "mo:base/Deque";
-import Principal "mo:base/Principal";
-import Option "mo:base/Option";
+import HashMap "mo:base/HashMap";
 import Iter "mo:base/Iter";
 import List "mo:base/List";
-import Array "mo:base/Array";
+import Nat64 "mo:base/Nat64";
+import Option "mo:base/Option";
+import Prelude "mo:base/Prelude";
+import Principal "mo:base/Principal";
+import Result "mo:base/Result";
+import Text "mo:base/Text";
+import Time "mo:base/Time";
+import Timer "mo:base/Timer";
 import CertTree "mo:ic-certification/CertTree";
 import Sha256 "mo:sha2/Sha256";
 
 import Logger "Logger";
-import CertifiedData "mo:base/CertifiedData";
-import Prelude "mo:base/Prelude";
-import Timer "mo:base/Timer";
 
 module {
-
 	//// CONSTANTS ////
 	/// The label used when constructing the certification tree.
 	let LABEL_WEBSOCKET : Blob = "websocket";
