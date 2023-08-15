@@ -453,7 +453,7 @@ module {
 				List.size(partitions.0);
 			};
 			var end_index = List.size(MESSAGES_FOR_GATEWAY);
-			if (end_index - start_index > MAX_NUMBER_OF_RETURNED_MESSAGES) {
+			if (((end_index - start_index) : Nat) > MAX_NUMBER_OF_RETURNED_MESSAGES) {
 				end_index := start_index + MAX_NUMBER_OF_RETURNED_MESSAGES;
 			};
 
