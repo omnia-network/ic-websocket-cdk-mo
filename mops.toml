@@ -1,0 +1,12 @@
+[package]
+name = "ic-websocket-cdk"
+version = "0.0.1"
+description = "IC WebSocket Motoko CDK"
+repository = ""
+keywords = [ ]
+license = "MIT"
+
+[dependencies]
+base = "0.9.7"
+ic-certification = "0.1.1"
+sha2 = "0.0.2"
