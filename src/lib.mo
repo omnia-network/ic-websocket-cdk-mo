@@ -250,7 +250,7 @@ module {
 		};
 	};
 
-	shared actor class IcWebSocket(init_handlers : WsHandlers) {
+	public shared actor class IcWebSocket(init_handlers : WsHandlers) {
 		//// STATE ////
 		/// Maps the client's public key to the client's identity (anonymous if not authenticated).
 		private var CLIENT_CALLER_MAP = HashMap.HashMap<ClientPublicKey, Principal>(0, Blob.equal, Blob.hash);
