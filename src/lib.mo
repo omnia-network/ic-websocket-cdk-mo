@@ -31,17 +31,17 @@ module {
 	public type ClientPublicKey = Blob;
 
 	/// The result of [ws_register].
-	public type CanisterWsRegisterResult = Result.Result<Null, Text>;
+	public type CanisterWsRegisterResult = Result.Result<(), Text>;
 	/// The result of [ws_open].
 	public type CanisterWsOpenResult = Result.Result<CanisterWsOpenResultValue, Text>;
 	// The result of [ws_message].
-	public type CanisterWsMessageResult = Result.Result<Null, Text>;
+	public type CanisterWsMessageResult = Result.Result<(), Text>;
 	/// The result of [ws_get_messages].
 	public type CanisterWsGetMessagesResult = Result.Result<CanisterOutputCertifiedMessages, Text>;
 	/// The result of [ws_send].
-	public type CanisterWsSendResult = Result.Result<Null, Text>;
+	public type CanisterWsSendResult = Result.Result<(), Text>;
 	/// The result of [ws_close].
-	public type CanisterWsCloseResult = Result.Result<Null, Text>;
+	public type CanisterWsCloseResult = Result.Result<(), Text>;
 
 	public type CanisterWsOpenResultValue = {
 		client_key : ClientPublicKey;
@@ -178,7 +178,7 @@ module {
 
 		/// Updates the registered gateway's status index with the given one.
 		/// Sets the last heartbeat to the current time.
-		public func update_status_index(status_index : Nat64) : Result.Result<Null, Text> {
+		public func update_status_index(status_index : Nat64) : Result.Result<(), Text> {
 			if (status_index <= last_status_index) {
 				if (status_index == 0) {
 					Logger.custom_print("Gateway status index set to 0");
@@ -188,7 +188,7 @@ module {
 			};
 			last_status_index := status_index;
 			last_heartbeat := ?get_current_time();
-			#ok(null);
+			#ok;
 		};
 
 		/// Resets the registered gateway to the initial state.
@@ -250,7 +250,7 @@ module {
 		};
 	};
 
-	public class IcWebSocket(init_handlers : WsHandlers) {
+	shared actor class IcWebSocket(init_handlers : WsHandlers) {
 		//// STATE ////
 		/// Maps the client's public key to the client's identity (anonymous if not authenticated).
 		private var CLIENT_CALLER_MAP = HashMap.HashMap<ClientPublicKey, Principal>(0, Blob.equal, Blob.hash);
@@ -344,7 +344,7 @@ module {
 
 		/// Updates the registered gateway with the new status index.
 		/// If the status index is not greater than the current one, the function returns an error.
-		func update_registered_gateway_status_index(status_index : Nat64) : async Result.Result<Null, Text> {
+		func update_registered_gateway_status_index(status_index : Nat64) : async Result.Result<(), Text> {
 			switch (REGISTERED_GATEWAY) {
 				case (?registered_gateway) {
 					// if the current status index is > 0 and the new status index is 0, it means that the gateway has been restarted
@@ -354,7 +354,7 @@ module {
 
 						registered_gateway.reset();
 
-						#ok(null);
+						#ok;
 					} else {
 						registered_gateway.update_status_index(status_index);
 					};
@@ -363,12 +363,12 @@ module {
 			};
 		};
 
-		func check_registered_client_key(client_key : ClientPublicKey) : Result.Result<Null, Text> {
+		func check_registered_client_key(client_key : ClientPublicKey) : Result.Result<(), Text> {
 			if (Option.isNull(CLIENT_CALLER_MAP.get(client_key))) {
 				return #err("client's public key has not been previously registered by client");
 			};
 
-			#ok(null);
+			#ok;
 		};
 
 		func init_outgoing_message_to_client_num(client_key : ClientPublicKey) {
@@ -382,12 +382,12 @@ module {
 			};
 		};
 
-		func increment_outgoing_message_to_client_num(client_key : ClientPublicKey) : Result.Result<Null, Text> {
+		func increment_outgoing_message_to_client_num(client_key : ClientPublicKey) : Result.Result<(), Text> {
 			let num = get_outgoing_message_to_client_num(client_key);
 			switch (num) {
 				case (#ok(num)) {
 					OUTGOING_MESSAGE_TO_CLIENT_NUM_MAP.put(client_key, num + 1);
-					#ok(null);
+					#ok;
 				};
 				case (#err(error)) #err(error);
 			};
@@ -404,12 +404,12 @@ module {
 			};
 		};
 
-		func increment_expected_incoming_message_from_client_num(client_key : ClientPublicKey) : Result.Result<Null, Text> {
+		func increment_expected_incoming_message_from_client_num(client_key : ClientPublicKey) : Result.Result<(), Text> {
 			let num = get_expected_incoming_message_from_client_num(client_key);
 			switch (num) {
 				case (#ok(num)) {
 					INCOMING_MESSAGE_FROM_CLIENT_NUM_MAP.put(client_key, num + 1);
-					#ok(null);
+					#ok;
 				};
 				case (#err(error)) #err(error);
 			};
@@ -506,7 +506,7 @@ module {
 		};
 
 		/// Checks if the caller of the method is the same as the one that was registered during the initialization of the CDK
-		func check_is_registered_gateway(input_principal : Principal) : Result.Result<Null, Text> {
+		func check_is_registered_gateway(input_principal : Principal) : Result.Result<(), Text> {
 			let gateway_principal = get_registered_gateway_principal();
 			// check if the caller is the same as the one that was registered during the initialization of the CDK
 			switch gateway_principal {
@@ -515,7 +515,7 @@ module {
 						return #err("caller is not the gateway that has been registered during CDK initialization");
 					};
 
-					#ok(null);
+					#ok;
 				};
 				case (null) {
 					#err("no gateway registered");
@@ -621,7 +621,7 @@ module {
 
 			// associate the identity of the client to its public key received as input
 			put_client_caller(args.client_key, caller);
-			#ok(null);
+			#ok;
 		};
 
 		/// Handles the WS connection open event received from the WS Gateway
@@ -683,7 +683,7 @@ module {
 								client_key = args.client_key;
 							});
 
-							#ok(null);
+							#ok;
 						};
 					};
 				};
@@ -710,7 +710,7 @@ module {
 								message = received_message.message;
 							});
 
-							#ok(null);
+							#ok;
 						};
 					};
 				};
@@ -755,7 +755,7 @@ module {
 																	message = message;
 																});
 
-																#ok(null);
+																#ok;
 															};
 														};
 													} else {
@@ -791,7 +791,7 @@ module {
 										client_key;
 									});
 
-									#ok(null);
+									#ok;
 								};
 							};
 						};
@@ -877,7 +877,7 @@ module {
 
 											MESSAGES_FOR_GATEWAY := List.append(MESSAGES_FOR_GATEWAY, List.fromArray([{ client_key; key; val = data }]));
 
-											#ok(null);
+											#ok;
 										};
 									};
 								};
