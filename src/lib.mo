@@ -121,7 +121,7 @@ module {
 	public type WebsocketMessage = {
 		client_key : ClientPublicKey; // To or from client key.
 		sequence_num : Nat64; // Both ways, messages should arrive with sequence numbers 0, 1, 2...
-		timestamp : Time.Time; // Timestamp of when the message was made for the recipient to inspect.
+		timestamp : Nat64; // Timestamp of when the message was made for the recipient to inspect.
 		message : Blob; // Application message encoded in binary.
 	};
 
@@ -379,7 +379,7 @@ module {
 		func get_expected_incoming_message_from_client_num(client_key : ClientPublicKey) : Result<Nat64, Text> {
 			switch (INCOMING_MESSAGE_FROM_CLIENT_NUM_MAP.get(client_key)) {
 				case (?num) #Ok(num);
-				case (null) #Err("expected incoming message from client num not initialized for client");
+				case (null) #Err("expected incoming message num not initialized for client");
 			};
 		};
 
@@ -413,7 +413,7 @@ module {
 				var nonce_str = Nat64.toText(nonce);
 				let padding : Nat = 20 - Text.size(nonce_str);
 				if (padding > 0) {
-					for (i in Iter.range(0, padding)) {
+					for (i in Iter.range(0, padding - 1)) {
 						nonce_str := "0" # nonce_str;
 					};
 				};
@@ -428,7 +428,12 @@ module {
 			let smallest_key = get_message_for_gateway_key(gateway_principal, nonce);
 			// partition the queue at the message which has the key with the nonce specified as argument to get_cert_messages
 			let start_index = do {
-				let partitions = List.partition(MESSAGES_FOR_GATEWAY, func(el : CanisterOutputMessage) : Bool { Text.less(el.key, smallest_key) });
+				let partitions = List.partition(
+					MESSAGES_FOR_GATEWAY,
+					func(el : CanisterOutputMessage) : Bool {
+						Text.less(el.key, smallest_key);
+					},
+				);
 				List.size(partitions.0);
 			};
 			var end_index = List.size(MESSAGES_FOR_GATEWAY);
@@ -441,17 +446,19 @@ module {
 
 		func get_messages_for_gateway(start_index : Nat, end_index : Nat) : List.List<CanisterOutputMessage> {
 			var messages : List.List<CanisterOutputMessage> = List.nil();
-			for (i in Iter.range(start_index, end_index)) {
+			for (i in Iter.range(start_index, end_index - 1)) {
 				let message = List.get(MESSAGES_FOR_GATEWAY, i);
 				switch (message) {
 					case (?message) {
 						messages := List.push(message, messages);
 					};
-					case (null) Prelude.unreachable();
+					case (null) {
+						// Do nothing
+					};
 				};
 			};
 
-			messages;
+			List.reverse(messages);
 		};
 
 		func get_cert_messages(gateway_principal : Principal, nonce : Nat64) : CanisterWsGetMessagesResult {
@@ -474,8 +481,7 @@ module {
 				case (?message) message.key;
 				case (null) "";
 			};
-			// let (cert, tree) = get_cert_for_range(first_key, last_key);
-			let (cert, tree) = (Blob.fromArray([]), Blob.fromArray([]));
+			let (cert, tree) = get_cert_for_range(first_key, last_key);
 
 			#Ok({
 				messages = List.toArray(messages);
@@ -817,7 +823,7 @@ module {
 									let input : WebsocketMessage = {
 										client_key;
 										sequence_num;
-										timestamp = get_current_time();
+										timestamp = Nat64.fromIntWrap(get_current_time());
 										message = msg_cbor;
 									};
 

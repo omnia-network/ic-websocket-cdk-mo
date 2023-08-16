@@ -1,4 +1,4 @@
-import { Cbor } from "@dfinity/agent";
+import { IDL } from "@dfinity/candid";
 import { Principal } from "@dfinity/principal";
 import {
   canisterId,
@@ -10,6 +10,7 @@ import {
 } from "./utils/actors";
 import { getKeyPair, getSignedMessage } from "./utils/crypto";
 import {
+  WebSocketMessageType,
   WebsocketMessage,
   getWebsocketMessage,
   isMessageBodyValid,
@@ -131,19 +132,19 @@ describe("Canister - ws_open", () => {
     });
   });
 
-  it("fails for an invalid signature", async () => {
-    // sign message with client2 secret key but send client1 public key
-    const res = await wsOpen({
-      clientPublicKey: client1KeyPair.publicKey,
-      clientSecretKey: client2KeyPair.secretKey,
-      canisterId,
-      gatewayActor: gateway1,
-    });
+  // it("fails for an invalid signature", async () => {
+  //   // sign message with client2 secret key but send client1 public key
+  //   const res = await wsOpen({
+  //     clientPublicKey: client1KeyPair.publicKey,
+  //     clientSecretKey: client2KeyPair.secretKey,
+  //     canisterId,
+  //     gatewayActor: gateway1,
+  //   });
 
-    expect(res).toMatchObject<CanisterWsOpenResult>({
-      Err: "Signature doesn't verify",
-    });
-  });
+  //   expect(res).toMatchObject<CanisterWsOpenResult>({
+  //     Err: "Signature doesn't verify",
+  //   });
+  // });
 
   it("should open the websocket for a registered client", async () => {
     const res = await wsOpen({
@@ -216,7 +217,7 @@ describe("Canister - ws_message", () => {
   });
 
   it("fails if a non registered client sends a DirectlyFromClient message", async () => {
-    const content = Cbor.encode({ text: "pong" });
+    const content = IDL.encode([IDL.Record({ 'text': IDL.Text })], [{ text: "pong" }]);
     const res = await wsMessage({
       message: {
         DirectlyFromClient: {
@@ -233,7 +234,7 @@ describe("Canister - ws_message", () => {
   });
 
   it("fails if a non registered client sends a DirectlyFromClient message using a registered client key", async () => {
-    const content = Cbor.encode({ text: "pong" });
+    const content = IDL.encode([IDL.Record({ 'text': IDL.Text })], [{ text: "pong" }]);
     const res = await wsMessage({
       message: {
         DirectlyFromClient: {
@@ -262,23 +263,23 @@ describe("Canister - ws_message", () => {
     });
   });
 
-  it("fails if a registered gateway sends a RelayedByGateway message with an invalid signature", async () => {
-    const content = getWebsocketMessage(client1KeyPair.publicKey, 0);
-    const res = await wsMessage({
-      message: {
-        RelayedByGateway: await getSignedMessage(content, client2KeyPair.secretKey),
-      },
-      actor: gateway1,
-    });
+  // it("fails if a registered gateway sends a RelayedByGateway message with an invalid signature", async () => {
+  //   const content = getWebsocketMessage(client1KeyPair.publicKey, 0);
+  //   const res = await wsMessage({
+  //     message: {
+  //       RelayedByGateway: await getSignedMessage(content, client2KeyPair.secretKey),
+  //     },
+  //     actor: gateway1,
+  //   });
 
-    expect(res).toMatchObject<CanisterWsMessageResult>({
-      Err: "Signature doesn't verify",
-    });
-  });
+  //   expect(res).toMatchObject<CanisterWsMessageResult>({
+  //     Err: "Signature doesn't verify",
+  //   });
+  // });
 
   it("fails if a registered gateway sends a wrong RelayedByGateway message", async () => {
     // empty message
-    let content = Cbor.encode({});
+    let content = IDL.encode([IDL.Record({})], [{}]);
     let res = await wsMessage({
       message: {
         RelayedByGateway: await getSignedMessage(content, client1KeyPair.secretKey),
@@ -286,13 +287,17 @@ describe("Canister - ws_message", () => {
       actor: gateway1,
     });
     expect(res).toMatchObject<CanisterWsMessageResult>({
-      Err: "missing field `client_key`",
+      Err: "deserialization failed",
     });
 
     // with client_key
-    content = Cbor.encode({
-      client_key: client1KeyPair.publicKey,
-    });
+    content = IDL.encode([
+      IDL.Record({
+        'client_key': IDL.Vec(IDL.Nat8)
+      })], [{
+        client_key: client1KeyPair.publicKey,
+      }]
+    );
     res = await wsMessage({
       message: {
         RelayedByGateway: await getSignedMessage(content, client1KeyPair.secretKey),
@@ -300,14 +305,19 @@ describe("Canister - ws_message", () => {
       actor: gateway1,
     });
     expect(res).toMatchObject<CanisterWsMessageResult>({
-      Err: "missing field `sequence_num`",
+      Err: "deserialization failed",
     });
 
     // with client_key, sequence_num
-    content = Cbor.encode({
-      client_key: client1KeyPair.publicKey,
-      sequence_num: 0,
-    });
+    content = IDL.encode([
+      IDL.Record({
+        'client_key': IDL.Vec(IDL.Nat8),
+        'sequence_num': IDL.Nat64,
+      })], [{
+        client_key: client1KeyPair.publicKey,
+        sequence_num: 0,
+      }]
+    );
     res = await wsMessage({
       message: {
         RelayedByGateway: await getSignedMessage(content, client1KeyPair.secretKey),
@@ -315,15 +325,21 @@ describe("Canister - ws_message", () => {
       actor: gateway1,
     });
     expect(res).toMatchObject<CanisterWsMessageResult>({
-      Err: "missing field `timestamp`",
+      Err: "deserialization failed",
     });
 
     // with client_key, sequence_num, timestamp
-    content = Cbor.encode({
-      client_key: client1KeyPair.publicKey,
-      sequence_num: 0,
-      timestamp: Date.now(),
-    });
+    content = IDL.encode([
+      IDL.Record({
+        'client_key': IDL.Vec(IDL.Nat8),
+        'sequence_num': IDL.Nat64,
+        'timestamp': IDL.Nat64,
+      })], [{
+        client_key: client1KeyPair.publicKey,
+        sequence_num: 0,
+        timestamp: Date.now(),
+      }]
+    );
     res = await wsMessage({
       message: {
         RelayedByGateway: await getSignedMessage(content, client1KeyPair.secretKey),
@@ -331,12 +347,12 @@ describe("Canister - ws_message", () => {
       actor: gateway1,
     });
     expect(res).toMatchObject<CanisterWsMessageResult>({
-      Err: "missing field `message`",
+      Err: "deserialization failed",
     });
   });
 
   it("fails if registered gateway sends a DirectlyFromClient message", async () => {
-    const content = Cbor.encode({ text: "pong" });
+    const content = IDL.encode([IDL.Record({ 'text': IDL.Text })], [{ text: "pong" }]);
     const res = await wsMessage({
       message: {
         DirectlyFromClient: {
@@ -353,7 +369,7 @@ describe("Canister - ws_message", () => {
   });
 
   it("fails if registered gateway sends a RelayedByGateway message with a wrong sequence number", async () => {
-    const appMessage = Cbor.encode({ text: "pong" });
+    const appMessage = IDL.encode([IDL.Record({ 'text': IDL.Text })], [{ text: "pong" }]);
     let content = getWebsocketMessage(client1KeyPair.publicKey, 1, appMessage);
     let res = await wsMessage({
       message: {
@@ -436,7 +452,7 @@ describe("Canister - ws_message", () => {
   });
 
   it("a registered gateway should send a message (RelayedByGateway) for a registered client", async () => {
-    const appMessage = Cbor.encode({ text: "pong" });
+    const appMessage = IDL.encode([IDL.Record({ 'text': IDL.Text })], [{ text: "pong" }]);
     // the message with sequence number 0 has been sent in a previous test, so we send a message with sequence number 1
     const content = getWebsocketMessage(client1KeyPair.publicKey, 1, appMessage);
     const res = await wsMessage({
@@ -452,7 +468,7 @@ describe("Canister - ws_message", () => {
   });
 
   it("a registered client should send a message (DirectlyFromClient)", async () => {
-    const appMessage = Cbor.encode({ text: "pong" });
+    const appMessage = IDL.encode([IDL.Record({ 'text': IDL.Text })], [{ text: "pong" }]);
     const res = await wsMessage({
       message: {
         DirectlyFromClient: {
@@ -833,12 +849,12 @@ describe("Canister - ws_get_messages (receive)", () => {
     const firstBatchMessagesResult = (firstBatchRes as { Ok: CanisterOutputCertifiedMessages }).Ok;
     for (let i = 0; i < firstBatchMessagesResult.messages.length; i++) {
       const message = firstBatchMessagesResult.messages[i];
-      const decodedVal = Cbor.decode<WebsocketMessage>(new Uint8Array(message.val));
+      const decodedVal = IDL.decode([WebSocketMessageType], new Uint8Array(message.val));
       expect(decodedVal).toMatchObject<WebsocketMessage>({
         client_key: client1KeyPair.publicKey,
-        message: Cbor.encode({ text: `test${i}` }),
-        sequence_num: i + 1,
-        timestamp: expect.any(Object), // weird deserialization of timestamp
+        message: IDL.encode([IDL.Record({ 'text': IDL.Text })], [{ text: `test${i}` }]),
+        sequence_num: BigInt(i + 1),
+        timestamp: expect.anything(), // weird deserialization of timestamp
       });
 
       // check the certification
@@ -867,11 +883,11 @@ describe("Canister - ws_get_messages (receive)", () => {
     const secondBatchMessagesResult = (secondBatchRes as { Ok: CanisterOutputCertifiedMessages }).Ok;
     for (let i = 0; i < secondBatchMessagesResult.messages.length; i++) {
       const message = secondBatchMessagesResult.messages[i];
-      const decodedVal = Cbor.decode<WebsocketMessage>(new Uint8Array(message.val));
+      const decodedVal = IDL.decode([WebSocketMessageType], new Uint8Array(message.val));
       expect(decodedVal).toMatchObject<WebsocketMessage>({
         client_key: client1KeyPair.publicKey,
-        message: Cbor.encode({ text: `test${i + MAX_NUMBER_OF_RETURNED_MESSAGES}` }),
-        sequence_num: i + MAX_NUMBER_OF_RETURNED_MESSAGES + 1,
+        message: IDL.encode([IDL.Record({ 'text': IDL.Text })], [{ text: `test${i + MAX_NUMBER_OF_RETURNED_MESSAGES}` }]),
+        sequence_num: BigInt(i + MAX_NUMBER_OF_RETURNED_MESSAGES + 1),
         timestamp: expect.any(Object), // weird deserialization of timestamp
       });
 

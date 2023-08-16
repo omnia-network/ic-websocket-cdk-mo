@@ -2,7 +2,8 @@
 
 import { Principal } from "@dfinity/principal";
 import { Secp256k1KeyIdentity } from "@dfinity/identity-secp256k1";
-import { ActorSubclass, Cbor, Certificate, HashTree, HttpAgent, compare, lookup_path, reconstruct } from "@dfinity/agent";
+import { ActorSubclass, Certificate, Cbor, HashTree, HttpAgent, compare, lookup_path, reconstruct } from "@dfinity/agent";
+import { IDL } from "@dfinity/candid";
 import { getSignedMessage } from "./crypto";
 import type { CanisterIncomingMessage, ClientPublicKey, _SERVICE } from "../../src/declarations/test_canister/test_canister.did";
 
@@ -33,10 +34,13 @@ type WsOpenArgs = {
 };
 
 export const wsOpen = async (args: WsOpenArgs, throwIfError = false) => {
-  const content = Cbor.encode({
+  const content = IDL.encode([IDL.Record({
+    'client_key': IDL.Vec(IDL.Nat8),
+    'canister_id': IDL.Principal,
+  })], [{
     client_key: args.clientPublicKey,
-    canister_id: args.canisterId,
-  });
+    canister_id: Principal.fromText(args.canisterId),
+  }]);
   const signedMessage = await getSignedMessage(content, args.clientSecretKey);
 
   const res = await args.gatewayActor.ws_open({
@@ -74,20 +78,27 @@ export const wsMessage = async (args: WsMessageArgs, throwIfError = false) => {
 
 export type WebsocketMessage = {
   client_key: ClientPublicKey,
-  sequence_num: number,
+  sequence_num: bigint,
   timestamp: number,
   message: ArrayBuffer | Uint8Array,
 };
 
-export const getWebsocketMessage = (clientPublicKey: ClientPublicKey, sequenceNumber: number, content?: ArrayBuffer | Uint8Array): Uint8Array => {
+export const WebSocketMessageType = IDL.Record({
+  'client_key': IDL.Vec(IDL.Nat8),
+  'sequence_num': IDL.Nat64,
+  'timestamp': IDL.Nat64,
+  'message': IDL.Vec(IDL.Nat8),
+});
+
+export const getWebsocketMessage = (clientPublicKey: ClientPublicKey, sequenceNumber: number, content?: ArrayBuffer | Uint8Array): ArrayBuffer => {
   const websocketMessage: WebsocketMessage = {
     client_key: clientPublicKey,
-    sequence_num: sequenceNumber,
+    sequence_num: BigInt(sequenceNumber),
     timestamp: Date.now(),
     message: new Uint8Array(content || [1, 2, 3, 4]),
   };
 
-  return new Uint8Array(Cbor.encode(websocketMessage));
+  return IDL.encode([WebSocketMessageType], [websocketMessage]);
 };
 
 type WsCloseArgs = {
