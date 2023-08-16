@@ -849,12 +849,12 @@ describe("Canister - ws_get_messages (receive)", () => {
     const firstBatchMessagesResult = (firstBatchRes as { Ok: CanisterOutputCertifiedMessages }).Ok;
     for (let i = 0; i < firstBatchMessagesResult.messages.length; i++) {
       const message = firstBatchMessagesResult.messages[i];
-      const decodedVal = IDL.decode([WebSocketMessageType], new Uint8Array(message.val));
+      const decodedVal = IDL.decode([WebSocketMessageType], new Uint8Array(message.val))[0];
       expect(decodedVal).toMatchObject<WebsocketMessage>({
         client_key: client1KeyPair.publicKey,
         message: IDL.encode([IDL.Record({ 'text': IDL.Text })], [{ text: `test${i}` }]),
         sequence_num: BigInt(i + 1),
-        timestamp: expect.anything(), // weird deserialization of timestamp
+        timestamp: expect.any(BigInt), // weird deserialization of timestamp
       });
 
       // check the certification
