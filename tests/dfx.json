@@ -1,0 +1,17 @@
+{
+  "canisters": {
+    "test_canister": {
+      "main": "src/test_canister/main.mo",
+      "type": "motoko"
+    }
+  },
+  "defaults": {
+    "build": {
+      "args": "",
+      "packtool": "mops sources"
+    }
+  },
+  "output_env_file": ".env",
+  "version": 1,
+  "dfx": "0.14.1"
+}
