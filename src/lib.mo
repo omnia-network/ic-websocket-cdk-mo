@@ -216,7 +216,7 @@ module {
 		var on_message : ?OnMessageCallback = init_on_message;
 		var on_close : ?OnCloseCallback = init_on_close;
 
-		public func call_on_open(args : OnOpenCallbackArgs) : async () {
+		public shared func call_on_open(args : OnOpenCallbackArgs) : async () {
 			switch (on_open) {
 				case (?callback) {
 					await callback(args);
@@ -227,7 +227,7 @@ module {
 			};
 		};
 
-		public func call_on_message(args : OnMessageCallbackArgs) : async () {
+		public shared func call_on_message(args : OnMessageCallbackArgs) : async () {
 			switch (on_message) {
 				case (?callback) {
 					await callback(args);
@@ -238,7 +238,7 @@ module {
 			};
 		};
 
-		public func call_on_close(args : OnCloseCallbackArgs) : async () {
+		public shared func call_on_close(args : OnCloseCallbackArgs) : async () {
 			switch (on_close) {
 				case (?callback) {
 					await callback(args);
@@ -602,7 +602,7 @@ module {
 
 		/// Initialize the CDK by setting the callback handlers and the **principal** of the WS Gateway that
 		/// will be polling the canister
-		public func init(gateway_principal : Text) : async () {
+		public shared func init(gateway_principal : Text) : async () {
 			// set the handlers specified by the canister that the CDK uses to manage the IC WebSocket connection
 			initialize_handlers(init_handlers);
 
@@ -616,7 +616,7 @@ module {
 		/// Handles the register event received from the client.
 		///
 		/// Registers the public key that the client SDK has generated to initialize an IcWebSocket connection.
-		public func ws_register(caller : Principal, args : CanisterWsRegisterArguments) : async CanisterWsRegisterResult {
+		public shared ({ caller }) func ws_register(args : CanisterWsRegisterArguments) : async CanisterWsRegisterResult {
 			// TODO: check who is the caller, which can be a client or the anonymous principal
 
 			// associate the identity of the client to its public key received as input
@@ -629,7 +629,7 @@ module {
 		/// WS Gateway relays the first message sent by the client together with its signature
 		/// to prove that the first message is actually coming from the same client that registered its public key
 		/// beforehand by calling the [ws_register] method.
-		public func ws_open(caller : Principal, args : CanisterWsOpenArguments) : async CanisterWsOpenResult {
+		public shared ({ caller }) func ws_open(args : CanisterWsOpenArguments) : async CanisterWsOpenResult {
 			// the caller must be the gateway that was registered during CDK initialization
 			switch (check_is_registered_gateway(caller)) {
 				case (#err(err)) {
@@ -666,7 +666,7 @@ module {
 		};
 
 		/// Handles the WS connection close event received from the WS Gateway.
-		public func ws_close(caller : Principal, args : CanisterWsCloseArguments) : async CanisterWsCloseResult {
+		public shared ({ caller }) func ws_close(args : CanisterWsCloseArguments) : async CanisterWsCloseResult {
 			switch (check_is_registered_gateway(caller)) {
 				case (#err(err)) {
 					#err(err);
@@ -691,7 +691,7 @@ module {
 		};
 
 		/// Handles the WS messages received either directly from the client or relayed by the WS Gateway.
-		public func ws_message(caller : Principal, args : CanisterWsMessageArguments) : async CanisterWsMessageResult {
+		public shared ({ caller }) func ws_message(args : CanisterWsMessageArguments) : async CanisterWsMessageResult {
 			switch (args.msg) {
 				// message sent directly from client
 				case (#DirectlyFromClient(received_message)) {
@@ -813,7 +813,7 @@ module {
 		};
 
 		/// Returns messages to the WS Gateway in response of a polling iteration.
-		public func ws_get_messages(caller : Principal, args : CanisterWsGetMessagesArguments) : async CanisterWsGetMessagesResult {
+		public shared ({ caller }) func ws_get_messages(args : CanisterWsGetMessagesArguments) : async CanisterWsGetMessagesResult {
 			// check if the caller of this method is the WS Gateway that has been set during the initialization of the SDK
 			switch (check_is_registered_gateway(caller)) {
 				case (#err(err)) {
@@ -830,7 +830,7 @@ module {
 		/// Under the hood, the message is serialized and certified, and then it is added to the queue of messages
 		/// that the WS Gateway will poll in the next iteration.
 		/// **Note**: you have to serialize the message to a `Blob` before calling this method. Use the `to_candid` function.
-		public func ws_send(client_key : ClientPublicKey, msg_cbor : Blob) : async CanisterWsSendResult {
+		public shared func ws_send(client_key : ClientPublicKey, msg_cbor : Blob) : async CanisterWsSendResult {
 			// check if the client is registered
 			switch (check_registered_client_key(client_key)) {
 				case (#err(err)) {
