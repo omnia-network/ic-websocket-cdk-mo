@@ -1,0 +1,40 @@
+name: ic-websocket-cdk-mo tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - uses: aviate-labs/setup-dfx@v0.2.6
+        with:
+          dfx-version: 0.14.1
+
+      - name: install mops
+        run: npm i ic-mops -g
+
+      - name: Install dependencies for integration tests
+        run: |
+          cd tests
+          mops install
+          npm install
+
+      - name: Prepare environment for integration tests
+        run: |
+          cd tests
+          dfx start --clean --background
+          npm run deploy:tests
+          npm run generate
+
+      - name: Run integration tests
+        run: cd tests && npm run test:integration

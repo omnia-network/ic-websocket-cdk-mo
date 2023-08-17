@@ -4,6 +4,10 @@ set -e
 
 cd tests
 
+# install Motoko dependencies
+mops install
+
+# install Node.js dependencies
 npm install
 
 # integration tests
