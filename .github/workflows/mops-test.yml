@@ -1,7 +1,10 @@
 name: mops test
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
 
 jobs:
   test:
@@ -22,5 +25,5 @@ jobs:
       - name: install mops packages
         run: mops install
 
-      - name: run tests
-        run: mops test
+      - name: run integration tests
+        run: ./scripts/test_canister.sh

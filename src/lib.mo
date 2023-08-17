@@ -473,15 +473,13 @@ module {
 				});
 			};
 
-			let first_key = switch (List.get(messages, 0)) {
-				case (?message) message.key;
-				case (null) "";
-			};
-			let last_key = switch (List.last(messages)) {
-				case (?message) message.key;
-				case (null) "";
-			};
-			let (cert, tree) = get_cert_for_range(first_key, last_key);
+			let keys = List.map(
+				messages,
+				func(message : CanisterOutputMessage) : CertTree.Path {
+					[Text.encodeUtf8(message.key)];
+				},
+			);
+			let (cert, tree) = get_cert_for_range(List.toIter(keys));
 
 			#Ok({
 				messages = List.toArray(messages);
@@ -518,8 +516,8 @@ module {
 			CertifiedData.set(root_hash);
 		};
 
-		func get_cert_for_range(first : Text, last : Text) : (Blob, Blob) {
-			let witness = CERT_TREE.reveals(Iter.fromArray([[Text.encodeUtf8(first)], [Text.encodeUtf8(last)]]));
+		func get_cert_for_range(keys : Iter.Iter<CertTree.Path>) : (Blob, Blob) {
+			let witness = CERT_TREE.reveals(keys);
 			let tree : CertTree.Witness = #labeled(LABEL_WEBSOCKET, witness);
 
 			switch (CertifiedData.getCertificate()) {

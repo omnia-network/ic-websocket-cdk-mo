@@ -132,19 +132,19 @@ describe("Canister - ws_open", () => {
     });
   });
 
-  // it("fails for an invalid signature", async () => {
-  //   // sign message with client2 secret key but send client1 public key
-  //   const res = await wsOpen({
-  //     clientPublicKey: client1KeyPair.publicKey,
-  //     clientSecretKey: client2KeyPair.secretKey,
-  //     canisterId,
-  //     gatewayActor: gateway1,
-  //   });
+  it.skip("fails for an invalid signature", async () => {
+    // sign message with client2 secret key but send client1 public key
+    const res = await wsOpen({
+      clientPublicKey: client1KeyPair.publicKey,
+      clientSecretKey: client2KeyPair.secretKey,
+      canisterId,
+      gatewayActor: gateway1,
+    });
 
-  //   expect(res).toMatchObject<CanisterWsOpenResult>({
-  //     Err: "Signature doesn't verify",
-  //   });
-  // });
+    expect(res).toMatchObject<CanisterWsOpenResult>({
+      Err: "Signature doesn't verify",
+    });
+  });
 
   it("should open the websocket for a registered client", async () => {
     const res = await wsOpen({
@@ -263,19 +263,19 @@ describe("Canister - ws_message", () => {
     });
   });
 
-  // it("fails if a registered gateway sends a RelayedByGateway message with an invalid signature", async () => {
-  //   const content = getWebsocketMessage(client1KeyPair.publicKey, 0);
-  //   const res = await wsMessage({
-  //     message: {
-  //       RelayedByGateway: await getSignedMessage(content, client2KeyPair.secretKey),
-  //     },
-  //     actor: gateway1,
-  //   });
+  it.skip("fails if a registered gateway sends a RelayedByGateway message with an invalid signature", async () => {
+    const content = getWebsocketMessage(client1KeyPair.publicKey, 0);
+    const res = await wsMessage({
+      message: {
+        RelayedByGateway: await getSignedMessage(content, client2KeyPair.secretKey),
+      },
+      actor: gateway1,
+    });
 
-  //   expect(res).toMatchObject<CanisterWsMessageResult>({
-  //     Err: "Signature doesn't verify",
-  //   });
-  // });
+    expect(res).toMatchObject<CanisterWsMessageResult>({
+      Err: "Signature doesn't verify",
+    });
+  });
 
   it("fails if a registered gateway sends a wrong RelayedByGateway message", async () => {
     // empty message
@@ -854,7 +854,7 @@ describe("Canister - ws_get_messages (receive)", () => {
         client_key: client1KeyPair.publicKey,
         message: IDL.encode([IDL.Record({ 'text': IDL.Text })], [{ text: `test${i}` }]),
         sequence_num: BigInt(i + 1),
-        timestamp: expect.any(BigInt), // weird deserialization of timestamp
+        timestamp: expect.any(BigInt),
       });
 
       // check the certification
@@ -883,12 +883,12 @@ describe("Canister - ws_get_messages (receive)", () => {
     const secondBatchMessagesResult = (secondBatchRes as { Ok: CanisterOutputCertifiedMessages }).Ok;
     for (let i = 0; i < secondBatchMessagesResult.messages.length; i++) {
       const message = secondBatchMessagesResult.messages[i];
-      const decodedVal = IDL.decode([WebSocketMessageType], new Uint8Array(message.val));
+      const decodedVal = IDL.decode([WebSocketMessageType], new Uint8Array(message.val))[0];
       expect(decodedVal).toMatchObject<WebsocketMessage>({
         client_key: client1KeyPair.publicKey,
         message: IDL.encode([IDL.Record({ 'text': IDL.Text })], [{ text: `test${i + MAX_NUMBER_OF_RETURNED_MESSAGES}` }]),
         sequence_num: BigInt(i + MAX_NUMBER_OF_RETURNED_MESSAGES + 1),
-        timestamp: expect.any(Object), // weird deserialization of timestamp
+        timestamp: expect.any(BigInt),
       });
 
       // check the certification
