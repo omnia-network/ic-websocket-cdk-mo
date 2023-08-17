@@ -23,6 +23,7 @@ jobs:
       - name: install mops
         run: npm i ic-mops -g
 
+      # the following steps are replicated in the scripts/test_canister.sh file
       - name: Install dependencies for integration tests
         run: |
           cd tests
@@ -35,6 +36,7 @@ jobs:
           dfx start --clean --background
           npm run deploy:tests
           npm run generate
+          echo "CANISTER_ID_TEST_CANISTER='$(npx json -f .dfx/local/canister_ids.json test_canister.local)'" > .env
 
       - name: Run integration tests
         run: cd tests && npm run test:integration
