@@ -603,6 +603,7 @@ module {
 						};
 						case (?{ client_key; canister_id }) {
 							// TODO: parse public key and verify signature
+							// Rust CDK reference: https://github.com/omnia-network/ic-websocket-cdk-rs/blob/48e784e6c5a0fbf5ff6ec8024b74e6d358a1231a/src/ic-websocket-cdk/src/lib.rs#L689-L700
 
 							switch (check_registered_client_key(client_key)) {
 								case (#Err(err)) {
@@ -693,6 +694,7 @@ module {
 										};
 										case (_) {
 											// TODO: parse public key and verify signature
+											// Rust CDK reference: https://github.com/omnia-network/ic-websocket-cdk-rs/blob/48e784e6c5a0fbf5ff6ec8024b74e6d358a1231a/src/ic-websocket-cdk/src/lib.rs#L774-L782
 
 											let expected_sequence_num = get_expected_incoming_message_from_client_num(client_key);
 											switch (expected_sequence_num) {
