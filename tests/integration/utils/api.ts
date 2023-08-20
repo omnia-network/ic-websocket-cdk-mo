@@ -1,10 +1,10 @@
 // helpers for functions that are called frequently in tests
 
-import { Principal } from "@dfinity/principal";
+import { ActorSubclass, Cbor, Certificate, HashTree, HttpAgent, compare, lookup_path, reconstruct } from "@dfinity/agent";
 import { Secp256k1KeyIdentity } from "@dfinity/identity-secp256k1";
-import { ActorSubclass, Certificate, Cbor, HashTree, HttpAgent, compare, lookup_path, reconstruct } from "@dfinity/agent";
+import { Principal } from "@dfinity/principal";
 import { IDL } from "@dfinity/candid";
-import { getSignedMessage } from "./crypto";
+import { getMessageSignature } from "./crypto";
 import type { CanisterIncomingMessage, ClientPublicKey, _SERVICE } from "../../src/declarations/test_canister/test_canister.did";
 
 type WsRegisterArgs = {
@@ -33,19 +33,22 @@ type WsOpenArgs = {
   gatewayActor: ActorSubclass<_SERVICE>,
 };
 
+export type CanisterOpenMessageContent = {
+  client_key: ClientPublicKey,
+  canister_id: Principal,
+};
+
 export const wsOpen = async (args: WsOpenArgs, throwIfError = false) => {
-  const content = IDL.encode([IDL.Record({
-    'client_key': IDL.Vec(IDL.Nat8),
-    'canister_id': IDL.Principal,
-  })], [{
+  const firstMessage: CanisterOpenMessageContent = {
     client_key: args.clientPublicKey,
     canister_id: Principal.fromText(args.canisterId),
-  }]);
-  const signedMessage = await getSignedMessage(content, args.clientSecretKey);
+  };
+  const contentBuf = new Uint8Array(Cbor.encode(firstMessage));
+  const sig = await getMessageSignature(contentBuf, args.clientSecretKey);
 
   const res = await args.gatewayActor.ws_open({
-    msg: signedMessage.content,
-    sig: signedMessage.sig,
+    content: contentBuf,
+    sig,
   });
 
   if (throwIfError) {
@@ -78,27 +81,20 @@ export const wsMessage = async (args: WsMessageArgs, throwIfError = false) => {
 
 export type WebsocketMessage = {
   client_key: ClientPublicKey,
-  sequence_num: bigint,
+  sequence_num: number,
   timestamp: number,
   message: ArrayBuffer | Uint8Array,
 };
 
-export const WebSocketMessageType = IDL.Record({
-  'client_key': IDL.Vec(IDL.Nat8),
-  'sequence_num': IDL.Nat64,
-  'timestamp': IDL.Nat64,
-  'message': IDL.Vec(IDL.Nat8),
-});
-
-export const getWebsocketMessage = (clientPublicKey: ClientPublicKey, sequenceNumber: number, content?: ArrayBuffer | Uint8Array): ArrayBuffer => {
+export const getWebsocketMessage = (clientPublicKey: ClientPublicKey, sequenceNumber: number, content?: ArrayBuffer | Uint8Array): Uint8Array => {
   const websocketMessage: WebsocketMessage = {
     client_key: clientPublicKey,
-    sequence_num: BigInt(sequenceNumber),
+    sequence_num: sequenceNumber,
     timestamp: Date.now(),
-    message: new Uint8Array(content || [1, 2, 3, 4]),
+    message: new Uint8Array(content || []),
   };
 
-  return IDL.encode([WebSocketMessageType], [websocketMessage]);
+  return new Uint8Array(Cbor.encode(websocketMessage));
 };
 
 type WsCloseArgs = {
@@ -133,7 +129,8 @@ type WsSendArgs = {
 };
 
 export const wsSend = async (args: WsSendArgs, throwIfError = false) => {
-  const res = await args.actor.ws_send(args.clientPublicKey, args.message);
+  const msgBytes = IDL.encode([IDL.Record({ 'text': IDL.Text })], [args.message]);
+  const res = await args.actor.ws_send(args.clientPublicKey, new Uint8Array(msgBytes));
 
   if (throwIfError) {
     if ('Err' in res) {
@@ -183,7 +180,7 @@ export const isValidCertificate = async (canisterId: string, certificate: Uint8A
   return compare(witness, reconstructed) === 0;
 };
 
-export const isMessageBodyValid = async (path: string, body: Uint8Array, tree: Uint8Array) => {
+export const isMessageBodyValid = async (path: string, body: Uint8Array | ArrayBuffer, tree: Uint8Array) => {
   const hashTree = Cbor.decode<HashTree>(tree);
   const sha = await crypto.subtle.digest("SHA-256", body);
   let treeSha = lookup_path(["websocket", path], hashTree);

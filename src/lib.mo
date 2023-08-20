@@ -12,6 +12,9 @@ import Principal "mo:base/Principal";
 import Text "mo:base/Text";
 import Time "mo:base/Time";
 import Timer "mo:base/Timer";
+import CborValue "mo:cbor/Value";
+import CborDecoder "mo:cbor/Decoder";
+import CborEncoder "mo:cbor/Encoder";
 import CertTree "mo:ic-certification/CertTree";
 import Sha256 "mo:sha2/Sha256";
 
@@ -58,7 +61,7 @@ module {
 
 	/// The arguments for [ws_open].
 	public type CanisterWsOpenArguments = {
-		msg : Blob;
+		content : Blob;
 		sig : Blob;
 	};
 
@@ -78,7 +81,7 @@ module {
 	};
 
 	/// The first message received by the canister in [ws_open].
-	type CanisterFirstMessageContent = {
+	type CanisterOpenMessageContent = {
 		client_key : ClientPublicKey;
 		canister_id : Principal;
 	};
@@ -118,8 +121,8 @@ module {
 	};
 
 	/// Messages exchanged through the WebSocket.
-	public type WebsocketMessage = {
-		client_key : ClientPublicKey; // To or from client key.
+	type WebsocketMessage = {
+		client_key : ClientPublicKey; // The client that the gateway will forward the message to or that sent the message.
 		sequence_num : Nat64; // Both ways, messages should arrive with sequence numbers 0, 1, 2...
 		timestamp : Nat64; // Timestamp of when the message was made for the recipient to inspect.
 		message : Blob; // Application message encoded in binary.
@@ -128,8 +131,8 @@ module {
 	/// Element of the list of messages returned to the WS Gateway after polling.
 	public type CanisterOutputMessage = {
 		client_key : ClientPublicKey; // The client that the gateway will forward the message to.
+		content : Blob; // The message to be relayed, that contains the application message.
 		key : Text; // Key for certificate verification.
-		val : Blob; // Encoded WebsocketMessage.
 	};
 
 	/// List of messages returned to the WS Gateway after polling.
@@ -247,6 +250,145 @@ module {
 				};
 				case (null) {
 					// Do nothing.
+				};
+			};
+		};
+	};
+
+	/// Decodes the CBOR blob into a `CanisterOpenMessageContent`.
+	func decode_canister_open_message_content(bytes : Blob) : Result<CanisterOpenMessageContent, Text> {
+		switch (CborDecoder.decode(bytes)) {
+			case (#err(err)) {
+				#Err("deserialization failed");
+			};
+			case (#ok(c)) {
+				switch (c) {
+					case (#majorType6({ tag; value })) {
+						switch (value) {
+							case (#majorType5(content)) {
+								#Ok({
+									client_key = do {
+										let client_key_key_value = Array.find(content, func((key, _) : (CborValue.Value, CborValue.Value)) : Bool = key == #majorType3("client_key"));
+										switch (client_key_key_value) {
+											case (?(_, #majorType2(client_key_blob))) {
+												Blob.fromArray(client_key_blob);
+											};
+											case (_) {
+												return #Err("missing field `client_key`");
+											};
+										};
+									};
+									canister_id = do {
+										let canister_id_key_value = Array.find(content, func((key, _) : (CborValue.Value, CborValue.Value)) : Bool = key == #majorType3("canister_id"));
+										switch (canister_id_key_value) {
+											case (?(_, #majorType2(canister_id_blob))) {
+												Principal.fromBlob(Blob.fromArray(canister_id_blob));
+											};
+											case (_) {
+												return #Err("missing field `canister_id`");
+											};
+										};
+									};
+								});
+							};
+							case (_) {
+								#Err("invalid CBOR message content");
+							};
+						};
+					};
+					case (_) {
+						#Err("invalid CBOR message content");
+					};
+				};
+			};
+		};
+	};
+
+	/// Encodes the `WebsocketMessage` into a CBOR blob.
+	func encode_websocket_message(websocket_message : WebsocketMessage) : Result<Blob, Text> {
+		let cbor_value : CborValue.Value = #majorType5([
+			(#majorType3("client_key"), #majorType2(Blob.toArray(websocket_message.client_key))),
+			(#majorType3("sequence_num"), #majorType0(websocket_message.sequence_num)),
+			(#majorType3("timestamp"), #majorType0(websocket_message.timestamp)),
+			(#majorType3("message"), #majorType2(Blob.toArray(websocket_message.message))),
+		]);
+
+		switch (CborEncoder.encode(cbor_value)) {
+			case (#err(#invalidValue(err))) {
+				return #Err(err);
+			};
+			case (#ok(data)) {
+				#Ok(Blob.fromArray(data));
+			};
+		};
+	};
+
+	/// Decodes the CBOR blob into a `WebsocketMessage`.
+	func decode_websocket_message(bytes : Blob) : Result<WebsocketMessage, Text> {
+		switch (CborDecoder.decode(bytes)) {
+			case (#err(err)) {
+				#Err("deserialization failed");
+			};
+			case (#ok(c)) {
+				switch (c) {
+					case (#majorType6({ tag; value })) {
+						switch (value) {
+							case (#majorType5(content)) {
+								#Ok({
+									client_key = do {
+										let client_key_key_value = Array.find(content, func((key, _) : (CborValue.Value, CborValue.Value)) : Bool = key == #majorType3("client_key"));
+										switch (client_key_key_value) {
+											case (?(_, #majorType2(client_key_blob))) {
+												Blob.fromArray(client_key_blob);
+											};
+											case (_) {
+												return #Err("missing field `client_key`");
+											};
+										};
+									};
+									sequence_num = do {
+										let sequence_num_key_value = Array.find(content, func((key, _) : (CborValue.Value, CborValue.Value)) : Bool = key == #majorType3("sequence_num"));
+										switch (sequence_num_key_value) {
+											case (?(_, #majorType0(sequence_num))) {
+												sequence_num;
+											};
+											case (_) {
+												return #Err("missing field `sequence_num`");
+											};
+										};
+									};
+									timestamp = do {
+										let timestamp_key_value = Array.find(content, func((key, _) : (CborValue.Value, CborValue.Value)) : Bool = key == #majorType3("timestamp"));
+										switch (timestamp_key_value) {
+											case (?(_, #majorType0(timestamp))) {
+												timestamp;
+											};
+											case (_) {
+												return #Err("missing field `timestamp`");
+											};
+										};
+									};
+									message = do {
+										let message_key_value = Array.find(content, func((key, _) : (CborValue.Value, CborValue.Value)) : Bool = key == #majorType3("message"));
+										switch (message_key_value) {
+											case (?(_, #majorType2(message_blob))) {
+												Blob.fromArray(message_blob);
+											};
+											case (_) {
+												return #Err("missing field `message`");
+											};
+										};
+									};
+								});
+							};
+							case (_) {
+								#Err("invalid CBOR message content");
+							};
+						};
+					};
+					case (_) {
+						#Err("invalid CBOR message content");
+					};
 				};
 			};
 		};
@@ -592,37 +734,42 @@ module {
 			// the caller must be the gateway that was registered during CDK initialization
 			switch (check_is_registered_gateway(caller)) {
 				case (#Err(err)) {
-					#Err(err);
+					return #Err(err);
 				};
 				case (_) {
-					// decode the first message sent by the client
-					let canister_first_message_content : ?CanisterFirstMessageContent = from_candid (args.msg);
-					switch (canister_first_message_content) {
-						case (null) {
-							#Err("invalid first message");
-						};
-						case (?{ client_key; canister_id }) {
-							// TODO: parse public key and verify signature
-							// Rust CDK reference: https://github.com/omnia-network/ic-websocket-cdk-rs/blob/48e784e6c5a0fbf5ff6ec8024b74e6d358a1231a/src/ic-websocket-cdk/src/lib.rs#L689-L700
-
-							switch (check_registered_client_key(client_key)) {
-								case (#Err(err)) {
-									#Err(err);
-								};
-								case (_) {
-									add_client(client_key);
-
-									#Ok({
-										client_key;
-										canister_id;
-										nonce = get_outgoing_message_nonce();
-									});
-								};
-							};
-						};
-					};
+					// do nothing
 				};
 			};
+
+			// decode the first message sent by the client
+			let { canister_id; client_key } = switch (decode_canister_open_message_content(args.content)) {
+				case (#Err(err)) {
+					return #Err(err);
+				};
+				case (#Ok(c)) {
+					c;
+				};
+			};
+
+			switch (check_registered_client_key(client_key)) {
+				case (#Err(err)) {
+					return #Err(err);
+				};
+				case (_) {
+					// do nothing
+				};
+			};
+
+			// TODO: parse public key and verify signature
+			// Rust CDK reference: https://github.com/omnia-network/ic-websocket-cdk-rs/blob/48e784e6c5a0fbf5ff6ec8024b74e6d358a1231a/src/ic-websocket-cdk/src/lib.rs#L689-L700
+
+			add_client(client_key);
+
+			#Ok({
+				client_key;
+				canister_id;
+				nonce = get_outgoing_message_nonce();
+			});
 		};
 
 		/// Handles the WS connection close event received from the WS Gateway.
@@ -679,54 +826,62 @@ module {
 					// this message can come only from the registered gateway
 					switch (check_is_registered_gateway(caller)) {
 						case (#Err(err)) {
-							#Err(err);
+							return #Err(err);
 						};
 						case (_) {
-							let websocket_message : ?WebsocketMessage = from_candid (received_message.content);
-							switch (websocket_message) {
-								case (null) {
-									#Err("deserialization failed");
-								};
-								case (?{ client_key; sequence_num; message }) {
-									switch (check_registered_client_key(client_key)) {
-										case (#Err(err)) {
-											#Err(err);
-										};
-										case (_) {
-											// TODO: parse public key and verify signature
-											// Rust CDK reference: https://github.com/omnia-network/ic-websocket-cdk-rs/blob/48e784e6c5a0fbf5ff6ec8024b74e6d358a1231a/src/ic-websocket-cdk/src/lib.rs#L774-L782
+							// do nothing
+						};
+					};
 
-											let expected_sequence_num = get_expected_incoming_message_from_client_num(client_key);
-											switch (expected_sequence_num) {
-												case (#Err(err)) {
-													#Err(err);
-												};
-												case (#Ok(expected_sequence_num)) {
-													if (sequence_num == expected_sequence_num) {
-														// increase the expected sequence number by 1
-														switch (increment_expected_incoming_message_from_client_num(client_key)) {
-															case (#Err(err)) {
-																#Err(err);
-															};
-															case (_) {
-																// trigger the on_message handler initialized by canister
-																// create message to send to client
-																await HANDLERS.call_on_message({
-																	client_key = client_key;
-																	message = message;
-																});
+					let { client_key; sequence_num; timestamp; message } = switch (decode_websocket_message(received_message.content)) {
+						case (#Err(err)) {
+							return #Err(err);
+						};
+						case (#Ok(c)) {
+							c;
+						};
+					};
 
-																#Ok;
-															};
-														};
-													} else {
-														#Err("incoming client's message relayed from WS Gateway does not have the expected sequence number");
-													};
-												};
-											};
-										};
+					switch (check_registered_client_key(client_key)) {
+						case (#Err(err)) {
+							return #Err(err);
+						};
+						case (_) {
+							// do nothing
+						};
+					};
+
+					// TODO: parse public key and verify signature
+					// Rust CDK reference: https://github.com/omnia-network/ic-websocket-cdk-rs/blob/48e784e6c5a0fbf5ff6ec8024b74e6d358a1231a/src/ic-websocket-cdk/src/lib.rs#L774-L782
+
+					let expected_sequence_num = get_expected_incoming_message_from_client_num(client_key);
+					switch (expected_sequence_num) {
+						case (#Err(err)) {
+							#Err(err);
+						};
+						case (#Ok(expected_sequence_num)) {
+							// check if the incoming message has the expected sequence number
+							if (sequence_num == expected_sequence_num) {
+								// increase the expected sequence number by 1
+								switch (increment_expected_incoming_message_from_client_num(client_key)) {
+									case (#Err(err)) {
+										return #Err(err);
+									};
+									case (_) {
+										// do nothing
 									};
 								};
+
+								// trigger the on_message handler initialized by canister
+								// create message to send to client
+								await HANDLERS.call_on_message({
+									client_key;
+									message;
+								});
+
+								#Ok;
+							} else {
+								#Err("incoming client's message relayed from WS Gateway does not have the expected sequence number");
 							};
 						};
 					};
@@ -791,53 +946,65 @@ module {
 		/// Under the hood, the message is serialized and certified, and then it is added to the queue of messages
 		/// that the WS Gateway will poll in the next iteration.
 		/// **Note**: you have to serialize the message to a `Blob` before calling this method. Use the `to_candid` function.
-		public func ws_send(client_key : ClientPublicKey, msg_cbor : Blob) : async CanisterWsSendResult {
+		public func ws_send(client_key : ClientPublicKey, msg_bytes : Blob) : async CanisterWsSendResult {
 			// check if the client is registered
 			switch (check_registered_client_key(client_key)) {
 				case (#Err(err)) {
-					#Err(err);
+					return #Err(err);
 				};
 				case (_) {
-					// get the principal of the gateway that is polling the canister
-					let gateway_principal = get_registered_gateway_principal();
+					// do nothing
+				};
+			};
 
-					// the nonce in key is used by the WS Gateway to determine the message to start in the polling iteration
-					// the key is also passed to the client in order to validate the body of the certified message
-					let outgoing_message_nonce = get_outgoing_message_nonce();
-					let key = get_message_for_gateway_key(gateway_principal, outgoing_message_nonce);
+			// get the principal of the gateway that is polling the canister
+			let gateway_principal = get_registered_gateway_principal();
 
-					// increment the nonce for the next message
-					increment_outgoing_message_nonce();
+			// the nonce in key is used by the WS Gateway to determine the message to start in the polling iteration
+			// the key is also passed to the client in order to validate the body of the certified message
+			let outgoing_message_nonce = get_outgoing_message_nonce();
+			let key = get_message_for_gateway_key(gateway_principal, outgoing_message_nonce);
 
-					// increment the sequence number for the next message to the client
-					switch (increment_outgoing_message_to_client_num(client_key)) {
+			// increment the nonce for the next message
+			increment_outgoing_message_nonce();
+
+			// increment the sequence number for the next message to the client
+			switch (increment_outgoing_message_to_client_num(client_key)) {
+				case (#Err(err)) {
+					return #Err(err);
+				};
+				case (_) {
+					// do nothing
+				};
+			};
+
+			switch (get_outgoing_message_to_client_num(client_key)) {
+				case (#Err(err)) {
+					#Err(err);
+				};
+				case (#Ok(sequence_num)) {
+					let websocket_message : WebsocketMessage = {
+						client_key;
+						sequence_num;
+						timestamp = Nat64.fromIntWrap(get_current_time());
+						message = msg_bytes;
+					};
+
+					// CBOR serialize message of type WebsocketMessage
+					switch (encode_websocket_message(websocket_message)) {
 						case (#Err(err)) {
 							#Err(err);
 						};
-						case (_) {
-							switch (get_outgoing_message_to_client_num(client_key)) {
-								case (#Err(err)) {
-									#Err(err);
-								};
-								case (#Ok(sequence_num)) {
-									let input : WebsocketMessage = {
-										client_key;
-										sequence_num;
-										timestamp = Nat64.fromIntWrap(get_current_time());
-										message = msg_cbor;
-									};
+						case (#Ok(content)) {
+							// certify data
+							put_cert_for_message(key, content);
 
-									// serialize the message of type WebsocketMessage
-									let data = to_candid (input);
+							MESSAGES_FOR_GATEWAY := List.append(
+								MESSAGES_FOR_GATEWAY,
+								List.fromArray([{ client_key; content; key }]),
+							);
 
-									// certify data
-									put_cert_for_message(key, data);
-
-									MESSAGES_FOR_GATEWAY := List.append(MESSAGES_FOR_GATEWAY, List.fromArray([{ client_key; key; val = data }]));
-
-									#Ok;
-								};
-							};
+							#Ok;
 						};
 					};
 				};

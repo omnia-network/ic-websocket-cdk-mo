@@ -1,12 +1,7 @@
-import IcWebSocketCdk "mo:ic-websocket-cdk";
-import Option "mo:base/Option";
 import Debug "mo:base/Debug";
+import IcWebSocketCdk "mo:ic-websocket-cdk";
 
 actor class TestCanister(gateway_principal : Text) {
-  type AppMessage = {
-    text : Text;
-  };
-
   func on_open(args : IcWebSocketCdk.OnOpenCallbackArgs) : async () {
     Debug.print("Opened websocket: " # debug_show (args.client_key));
   };
@@ -20,9 +15,9 @@ actor class TestCanister(gateway_principal : Text) {
   };
 
   let handlers = IcWebSocketCdk.WsHandlers(
-    Option.make(on_open),
-    Option.make(on_message),
-    Option.make(on_close),
+    ?on_open,
+    ?on_message,
+    ?on_close,
   );
 
   var ws = IcWebSocketCdk.IcWebSocket(handlers, gateway_principal);
@@ -63,7 +58,7 @@ actor class TestCanister(gateway_principal : Text) {
   };
 
   // send a message to the client, usually called by the canister itself
-  public shared func ws_send(client_key : IcWebSocketCdk.ClientPublicKey, msg : AppMessage) : async IcWebSocketCdk.CanisterWsSendResult {
-    await ws.ws_send(client_key, to_candid (msg));
+  public shared func ws_send(client_key : IcWebSocketCdk.ClientPublicKey, msg_bytes : Blob) : async IcWebSocketCdk.CanisterWsSendResult {
+    await ws.ws_send(client_key, msg_bytes);
   };
 };
