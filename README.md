@@ -16,7 +16,7 @@ mops add https://github.com/omnia-network/ic-websocket-cdk-mo#<last-commit-hash-
 For example, a valid installation line would be:
 
 ```bash
-mops add https://github.com/omnia-network/ic-websocket-cdk-mo#e28f06b2f310ffd47b2f1808e702b37a638029e0
+mops add https://github.com/omnia-network/ic-websocket-cdk-mo#c9970f76e74a9019f2a5c97b317b84b9cc13d808
 ```
 
 It will also be available on **mops** soon.
