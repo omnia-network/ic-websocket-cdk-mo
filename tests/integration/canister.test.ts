@@ -34,7 +34,7 @@ import type { WebsocketMessage } from "./utils/api";
 
 const MAX_NUMBER_OF_RETURNED_MESSAGES = 10; // set in the CDK
 const SEND_MESSAGES_COUNT = MAX_NUMBER_OF_RETURNED_MESSAGES + 2; // test with more messages to check the indexes and limits
-const MAX_GATEWAY_KEEP_ALIVE_TIME_MS = 15_000; // set in the CDK
+const MAX_GATEWAY_KEEP_ALIVE_TIME_MS = 60_000; // set in the CDK
 
 let client1KeyPair: { publicKey: Uint8Array; secretKey: Uint8Array | string; };
 let client2KeyPair: { publicKey: Uint8Array; secretKey: Uint8Array | string; };
@@ -721,7 +721,7 @@ describe("Canister - ws_message (gateway status)", () => {
     expect(sendRes).toMatchObject<CanisterWsSendResult>({
       Err: "client's public key has not been previously registered by client",
     });
-  });
+  }, 180_000);
 
   it("registered gateway should reconnect by resetting the status index", async () => {
     let res = await wsMessage({

@@ -27,7 +27,9 @@ module {
 	/// The maximum number of messages returned by [ws_get_messages] at each poll.
 	let MAX_NUMBER_OF_RETURNED_MESSAGES : Nat = 10;
 	/// The delay between two consecutive checks if the registered gateway is still alive.
-	let CHECK_REGISTERED_GATEWAY_DELAY_NS : Nat = 15_000_000_000; // 15 seconds
+	/// TODO: set it at build time from the environment, so that it can be changed (e.g. for integration tests).
+	///       Rust reference: https://github.com/omnia-network/ic-websocket-cdk-rs/blob/48e784e6c5a0fbf5ff6ec8024b74e6d358a1231a/src/ic-websocket-cdk/src/lib.rs#L231-L247
+	let CHECK_REGISTERED_GATEWAY_DELAY_NS : Nat = 60_000_000_000; // 60 seconds
 
 	//// TYPES ////
 	/// Just to be compatible with the Rust version.
