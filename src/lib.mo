@@ -396,35 +396,36 @@ module {
 		};
 	};
 
-	public class IcWebSocket(init_handlers : WsHandlers, gateway_principal : Text) {
+	/// IC WebSocket class that holds the internal state of the IC WebSocket.
+	///
+	/// **Note**: you should only pass an instance of this class to the IcWebSocket class constructor, without using the methods or accessing the fields directly.
+	public class IcWebSocketState(gateway_principal : Text) {
 		//// STATE ////
 		/// Maps the client's public key to the client's identity (anonymous if not authenticated).
-		private var CLIENT_CALLER_MAP = HashMap.HashMap<ClientPublicKey, Principal>(0, Blob.equal, Blob.hash);
+		public var CLIENT_CALLER_MAP = HashMap.HashMap<ClientPublicKey, Principal>(0, Blob.equal, Blob.hash);
 		/// Maps the client's public key to the sequence number to use for the next outgoing message (to that client).
-		private var OUTGOING_MESSAGE_TO_CLIENT_NUM_MAP = HashMap.HashMap<ClientPublicKey, Nat64>(0, Blob.equal, Blob.hash);
+		public var OUTGOING_MESSAGE_TO_CLIENT_NUM_MAP = HashMap.HashMap<ClientPublicKey, Nat64>(0, Blob.equal, Blob.hash);
 		/// Maps the client's public key to the expected sequence number of the next incoming message (from that client).
-		private var INCOMING_MESSAGE_FROM_CLIENT_NUM_MAP = HashMap.HashMap<ClientPublicKey, Nat64>(0, Blob.equal, Blob.hash);
+		public var INCOMING_MESSAGE_FROM_CLIENT_NUM_MAP = HashMap.HashMap<ClientPublicKey, Nat64>(0, Blob.equal, Blob.hash);
 		/// Keeps track of the Merkle tree used for certified queries
-		private var CERT_TREE_STORE : CertTree.Store = CertTree.newStore();
-		private var CERT_TREE = CertTree.Ops(CERT_TREE_STORE);
+		public var CERT_TREE_STORE : CertTree.Store = CertTree.newStore();
+		public var CERT_TREE = CertTree.Ops(CERT_TREE_STORE);
 		/// Keeps track of the principal of the WS Gateway which polls the canister
-		private var REGISTERED_GATEWAY : RegisteredGateway = RegisteredGateway(Principal.fromText(gateway_principal));
+		public var REGISTERED_GATEWAY : RegisteredGateway = RegisteredGateway(Principal.fromText(gateway_principal));
 		/// Keeps track of the messages that have to be sent to the WS Gateway
-		private var MESSAGES_FOR_GATEWAY : List.List<CanisterOutputMessage> = List.nil();
+		public var MESSAGES_FOR_GATEWAY : List.List<CanisterOutputMessage> = List.nil();
 		/// Keeps track of the nonce which:
 		/// - the WS Gateway uses to specify the first index of the certified messages to be returned when polling
 		/// - the client uses as part of the path in the Merkle tree in order to verify the certificate of the messages relayed by the WS Gateway
-		private var OUTGOING_MESSAGE_NONCE : Nat64 = 0;
-		/// The callback handlers for the WebSocket.
-		private var HANDLERS : WsHandlers = init_handlers;
+		public var OUTGOING_MESSAGE_NONCE : Nat64 = 0;
 
 		//// FUNCTIONS ////
 		/// Resets all RefCells to their initial state.
 		/// If there is a registered gateway, resets its state as well.
-		func reset_internal_state() : async () {
+		public func reset_internal_state(handlers : WsHandlers) : async () {
 			// for each client, call the on_close handler before clearing the map
 			for (client_key in CLIENT_CALLER_MAP.keys()) {
-				await HANDLERS.call_on_close({
+				await handlers.call_on_close({
 					client_key;
 				});
 			};
@@ -438,45 +439,33 @@ module {
 			OUTGOING_MESSAGE_NONCE := 0;
 		};
 
-		/// Resets the internal state of the IC WebSocket CDK.
-		///
-		/// **Note:** You should only call this function in tests.
-		public func wipe() : async () {
-			await reset_internal_state();
-
-			// if there's a registered gateway, reset its state
-			REGISTERED_GATEWAY.reset();
-
-			Logger.custom_print("Internal state has been wiped!");
-		};
-
-		func get_outgoing_message_nonce() : Nat64 {
+		public func get_outgoing_message_nonce() : Nat64 {
 			OUTGOING_MESSAGE_NONCE;
 		};
 
-		func increment_outgoing_message_nonce() {
+		public func increment_outgoing_message_nonce() {
 			OUTGOING_MESSAGE_NONCE += 1;
 		};
 
-		func put_client_caller(client_key : ClientPublicKey, caller : Principal) {
+		public func put_client_caller(client_key : ClientPublicKey, caller : Principal) {
 			CLIENT_CALLER_MAP.put(client_key, caller);
 		};
 
-		func get_client_caller(client_key : ClientPublicKey) : ?Principal {
+		public func get_client_caller(client_key : ClientPublicKey) : ?Principal {
 			CLIENT_CALLER_MAP.get(client_key);
 		};
 
-		func get_registered_gateway_principal() : Principal {
+		public func get_registered_gateway_principal() : Principal {
 			REGISTERED_GATEWAY.gateway_principal;
 		};
 
 		/// Updates the registered gateway with the new status index.
 		/// If the status index is not greater than the current one, the function returns an error.
-		func update_registered_gateway_status_index(status_index : Nat64) : async Result<(), Text> {
+		public func update_registered_gateway_status_index(handlers : WsHandlers, status_index : Nat64) : async Result<(), Text> {
 			// if the current status index is > 0 and the new status index is 0, it means that the gateway has been restarted
 			// in this case, we reset the internal state because all clients are not connected to the gateway anymore
 			if (REGISTERED_GATEWAY.last_status_index > 0 and status_index == 0) {
-				await reset_internal_state();
+				await reset_internal_state(handlers);
 
 				REGISTERED_GATEWAY.reset();
 
@@ -486,7 +475,7 @@ module {
 			};
 		};
 
-		func check_registered_client_key(client_key : ClientPublicKey) : Result<(), Text> {
+		public func check_registered_client_key(client_key : ClientPublicKey) : Result<(), Text> {
 			if (Option.isNull(CLIENT_CALLER_MAP.get(client_key))) {
 				return #Err("client's public key has not been previously registered by client");
 			};
@@ -498,14 +487,14 @@ module {
 			OUTGOING_MESSAGE_TO_CLIENT_NUM_MAP.put(client_key, 0);
 		};
 
-		func get_outgoing_message_to_client_num(client_key : ClientPublicKey) : Result<Nat64, Text> {
+		public func get_outgoing_message_to_client_num(client_key : ClientPublicKey) : Result<Nat64, Text> {
 			switch (OUTGOING_MESSAGE_TO_CLIENT_NUM_MAP.get(client_key)) {
 				case (?num) #Ok(num);
 				case (null) #Err("outgoing message to client num not initialized for client");
 			};
 		};
 
-		func increment_outgoing_message_to_client_num(client_key : ClientPublicKey) : Result<(), Text> {
+		public func increment_outgoing_message_to_client_num(client_key : ClientPublicKey) : Result<(), Text> {
 			let num = get_outgoing_message_to_client_num(client_key);
 			switch (num) {
 				case (#Ok(num)) {
@@ -520,14 +509,14 @@ module {
 			INCOMING_MESSAGE_FROM_CLIENT_NUM_MAP.put(client_key, 0);
 		};
 
-		func get_expected_incoming_message_from_client_num(client_key : ClientPublicKey) : Result<Nat64, Text> {
+		public func get_expected_incoming_message_from_client_num(client_key : ClientPublicKey) : Result<Nat64, Text> {
 			switch (INCOMING_MESSAGE_FROM_CLIENT_NUM_MAP.get(client_key)) {
 				case (?num) #Ok(num);
 				case (null) #Err("expected incoming message num not initialized for client");
 			};
 		};
 
-		func increment_expected_incoming_message_from_client_num(client_key : ClientPublicKey) : Result<(), Text> {
+		public func increment_expected_incoming_message_from_client_num(client_key : ClientPublicKey) : Result<(), Text> {
 			let num = get_expected_incoming_message_from_client_num(client_key);
 			switch (num) {
 				case (#Ok(num)) {
@@ -538,20 +527,20 @@ module {
 			};
 		};
 
-		func add_client(client_key : ClientPublicKey) {
+		public func add_client(client_key : ClientPublicKey) {
 			// initialize incoming client's message sequence number to 0
 			init_expected_incoming_message_from_client_num(client_key);
 			// initialize outgoing message sequence number to 0
 			init_outgoing_message_to_client_num(client_key);
 		};
 
-		func remove_client(client_key : ClientPublicKey) {
+		public func remove_client(client_key : ClientPublicKey) {
 			CLIENT_CALLER_MAP.delete(client_key);
 			OUTGOING_MESSAGE_TO_CLIENT_NUM_MAP.delete(client_key);
 			INCOMING_MESSAGE_FROM_CLIENT_NUM_MAP.delete(client_key);
 		};
 
-		func get_message_for_gateway_key(gateway_principal : Principal, nonce : Nat64) : Text {
+		public func get_message_for_gateway_key(gateway_principal : Principal, nonce : Nat64) : Text {
 			let nonce_to_text = do {
 				// prints the nonce with 20 padding zeros
 				var nonce_str = Nat64.toText(nonce);
@@ -605,7 +594,7 @@ module {
 			List.reverse(messages);
 		};
 
-		func get_cert_messages(gateway_principal : Principal, nonce : Nat64) : CanisterWsGetMessagesResult {
+		public func get_cert_messages(gateway_principal : Principal, nonce : Nat64) : CanisterWsGetMessagesResult {
 			let (start_index, end_index) = get_messages_for_gateway_range(gateway_principal, nonce);
 			let messages = get_messages_for_gateway(start_index, end_index);
 
@@ -633,7 +622,7 @@ module {
 		};
 
 		/// Checks if the caller of the method is the same as the one that was registered during the initialization of the CDK
-		func check_is_registered_gateway(input_principal : Principal) : Result<(), Text> {
+		public func check_is_registered_gateway(input_principal : Principal) : Result<(), Text> {
 			let gateway_principal = get_registered_gateway_principal();
 			// check if the caller is the same as the one that was registered during the initialization of the CDK
 			if (Principal.notEqual(gateway_principal, input_principal)) {
@@ -651,7 +640,7 @@ module {
 			d.sum();
 		};
 
-		func put_cert_for_message(key : Text, value : Blob) {
+		public func put_cert_for_message(key : Text, value : Blob) {
 			let root_hash = do {
 				CERT_TREE.put([Text.encodeUtf8(key)], Sha256.fromBlob(#sha256, value));
 				labeledHash(LABEL_WEBSOCKET, CERT_TREE.treeHash());
@@ -672,6 +661,96 @@ module {
 				case (null) Prelude.unreachable();
 			};
 		};
+	};
+
+	/// Sends a message to the client.
+	///
+	/// Under the hood, the message is certified, and then it is added to the queue of messages
+	/// that the WS Gateway will poll in the next iteration.
+	/// **Note**: you have to serialize the message to a `Blob` before calling this method.
+	/// Use the `to_candid` function or any other serialization method of your choice.
+	public func ws_send(ws_state : IcWebSocketState, client_key : ClientPublicKey, msg_bytes : Blob) : async CanisterWsSendResult {
+		// check if the client is registered
+		switch (ws_state.check_registered_client_key(client_key)) {
+			case (#Err(err)) {
+				return #Err(err);
+			};
+			case (_) {
+				// do nothing
+			};
+		};
+
+		// get the principal of the gateway that is polling the canister
+		let gateway_principal = ws_state.get_registered_gateway_principal();
+
+		// the nonce in key is used by the WS Gateway to determine the message to start in the polling iteration
+		// the key is also passed to the client in order to validate the body of the certified message
+		let outgoing_message_nonce = ws_state.get_outgoing_message_nonce();
+		let key = ws_state.get_message_for_gateway_key(gateway_principal, outgoing_message_nonce);
+
+		// increment the nonce for the next message
+		ws_state.increment_outgoing_message_nonce();
+
+		// increment the sequence number for the next message to the client
+		switch (ws_state.increment_outgoing_message_to_client_num(client_key)) {
+			case (#Err(err)) {
+				return #Err(err);
+			};
+			case (_) {
+				// do nothing
+			};
+		};
+
+		switch (ws_state.get_outgoing_message_to_client_num(client_key)) {
+			case (#Err(err)) {
+				#Err(err);
+			};
+			case (#Ok(sequence_num)) {
+				let websocket_message : WebsocketMessage = {
+					client_key;
+					sequence_num;
+					timestamp = Nat64.fromIntWrap(get_current_time());
+					message = msg_bytes;
+				};
+
+				// CBOR serialize message of type WebsocketMessage
+				switch (encode_websocket_message(websocket_message)) {
+					case (#Err(err)) {
+						#Err(err);
+					};
+					case (#Ok(content)) {
+						// certify data
+						ws_state.put_cert_for_message(key, content);
+
+						ws_state.MESSAGES_FOR_GATEWAY := List.append(
+							ws_state.MESSAGES_FOR_GATEWAY,
+							List.fromArray([{ client_key; content; key }]),
+						);
+
+						#Ok;
+					};
+				};
+			};
+		};
+	};
+
+	public class IcWebSocket(init_handlers : WsHandlers, init_ws_state : IcWebSocketState) {
+		/// The state of the IC WebSocket.
+		private var WS_STATE : IcWebSocketState = init_ws_state;
+		/// The callback handlers for the WebSocket.
+		private var HANDLERS : WsHandlers = init_handlers;
+
+		/// Resets the internal state of the IC WebSocket CDK.
+		///
+		/// **Note:** You should only call this function in tests.
+		public func wipe() : async () {
+			await WS_STATE.reset_internal_state(HANDLERS);
+
+			// if there's a registered gateway, reset its state
+			WS_STATE.REGISTERED_GATEWAY.reset();
+
+			Logger.custom_print("Internal state has been wiped!");
+		};
 
 		/// Schedules a timer to check if the registered gateway has sent a heartbeat recently.
 		///
@@ -691,14 +770,14 @@ module {
 		///
 		/// At the end, a new timer is scheduled to check again if the registered gateway has sent a heartbeat recently.
 		func check_registered_gateway_timer_callback() : async () {
-			switch (REGISTERED_GATEWAY.last_heartbeat) {
+			switch (WS_STATE.REGISTERED_GATEWAY.last_heartbeat) {
 				case (?last_heartbeat) {
 					if (get_current_time() - last_heartbeat > get_check_registered_gateway_delay_ns()) {
 						Logger.custom_print("[timer-cb]: Registered gateway has not sent a heartbeat for more than" # debug_show (get_check_registered_gateway_delay_ns() / 1_000_000_000) # "seconds, resetting all internal state");
 
-						await reset_internal_state();
+						await WS_STATE.reset_internal_state(HANDLERS);
 
-						REGISTERED_GATEWAY.reset();
+						WS_STATE.REGISTERED_GATEWAY.reset();
 					};
 				};
 				case (null) {
@@ -723,7 +802,7 @@ module {
 			// TODO: check who is the caller, which can be a client or the anonymous principal
 
 			// associate the identity of the client to its public key received as input
-			put_client_caller(args.client_key, caller);
+			WS_STATE.put_client_caller(args.client_key, caller);
 			#Ok;
 		};
 
@@ -734,7 +813,7 @@ module {
 		/// beforehand by calling the [ws_register] method.
 		public func ws_open(caller : Principal, args : CanisterWsOpenArguments) : async CanisterWsOpenResult {
 			// the caller must be the gateway that was registered during CDK initialization
-			switch (check_is_registered_gateway(caller)) {
+			switch (WS_STATE.check_is_registered_gateway(caller)) {
 				case (#Err(err)) {
 					return #Err(err);
 				};
@@ -753,7 +832,7 @@ module {
 				};
 			};
 
-			switch (check_registered_client_key(client_key)) {
+			switch (WS_STATE.check_registered_client_key(client_key)) {
 				case (#Err(err)) {
 					return #Err(err);
 				};
@@ -765,28 +844,28 @@ module {
 			// TODO: parse public key and verify signature
 			// Rust CDK reference: https://github.com/omnia-network/ic-websocket-cdk-rs/blob/48e784e6c5a0fbf5ff6ec8024b74e6d358a1231a/src/ic-websocket-cdk/src/lib.rs#L689-L700
 
-			add_client(client_key);
+			WS_STATE.add_client(client_key);
 
 			#Ok({
 				client_key;
 				canister_id;
-				nonce = get_outgoing_message_nonce();
+				nonce = WS_STATE.get_outgoing_message_nonce();
 			});
 		};
 
 		/// Handles the WS connection close event received from the WS Gateway.
 		public func ws_close(caller : Principal, args : CanisterWsCloseArguments) : async CanisterWsCloseResult {
-			switch (check_is_registered_gateway(caller)) {
+			switch (WS_STATE.check_is_registered_gateway(caller)) {
 				case (#Err(err)) {
 					#Err(err);
 				};
 				case (_) {
-					switch (check_registered_client_key(args.client_key)) {
+					switch (WS_STATE.check_registered_client_key(args.client_key)) {
 						case (#Err(err)) {
 							#Err(err);
 						};
 						case (_) {
-							remove_client(args.client_key);
+							WS_STATE.remove_client(args.client_key);
 
 							await HANDLERS.call_on_close({
 								client_key = args.client_key;
@@ -805,7 +884,7 @@ module {
 				// message sent directly from client
 				case (#DirectlyFromClient(received_message)) {
 					// check if the identity of the caller corresponds to the one registered for the given public key
-					switch (get_client_caller(received_message.client_key)) {
+					switch (WS_STATE.get_client_caller(received_message.client_key)) {
 						case (null) {
 							#Err("client is not registered, call ws_register first");
 						};
@@ -826,7 +905,7 @@ module {
 				// WS Gateway relays a message from the client
 				case (#RelayedByGateway(received_message)) {
 					// this message can come only from the registered gateway
-					switch (check_is_registered_gateway(caller)) {
+					switch (WS_STATE.check_is_registered_gateway(caller)) {
 						case (#Err(err)) {
 							return #Err(err);
 						};
@@ -844,7 +923,7 @@ module {
 						};
 					};
 
-					switch (check_registered_client_key(client_key)) {
+					switch (WS_STATE.check_registered_client_key(client_key)) {
 						case (#Err(err)) {
 							return #Err(err);
 						};
@@ -856,7 +935,7 @@ module {
 					// TODO: parse public key and verify signature
 					// Rust CDK reference: https://github.com/omnia-network/ic-websocket-cdk-rs/blob/48e784e6c5a0fbf5ff6ec8024b74e6d358a1231a/src/ic-websocket-cdk/src/lib.rs#L774-L782
 
-					let expected_sequence_num = get_expected_incoming_message_from_client_num(client_key);
+					let expected_sequence_num = WS_STATE.get_expected_incoming_message_from_client_num(client_key);
 					switch (expected_sequence_num) {
 						case (#Err(err)) {
 							#Err(err);
@@ -865,7 +944,7 @@ module {
 							// check if the incoming message has the expected sequence number
 							if (sequence_num == expected_sequence_num) {
 								// increase the expected sequence number by 1
-								switch (increment_expected_incoming_message_from_client_num(client_key)) {
+								switch (WS_STATE.increment_expected_incoming_message_from_client_num(client_key)) {
 									case (#Err(err)) {
 										return #Err(err);
 									};
@@ -891,13 +970,13 @@ module {
 				// WS Gateway notifies the canister of the established IC WebSocket connection
 				case (#IcWebSocketEstablished(client_key)) {
 					// this message can come only from the registered gateway
-					switch (check_is_registered_gateway(caller)) {
+					switch (WS_STATE.check_is_registered_gateway(caller)) {
 						case (#Err(err)) {
 							#Err(err);
 						};
 						case (_) {
 							// check if client registered its public key by calling ws_register
-							switch (check_registered_client_key(client_key)) {
+							switch (WS_STATE.check_registered_client_key(client_key)) {
 								case (#Err(err)) {
 									#Err(err);
 								};
@@ -918,12 +997,12 @@ module {
 				// WS Gateway notifies the canister that it is up and running
 				case (#IcWebSocketGatewayStatus(gateway_status)) {
 					// this message can come only from the registered gateway
-					switch (check_is_registered_gateway(caller)) {
+					switch (WS_STATE.check_is_registered_gateway(caller)) {
 						case (#Err(err)) {
 							#Err(err);
 						};
 						case (_) {
-							await update_registered_gateway_status_index(gateway_status.status_index);
+							await WS_STATE.update_registered_gateway_status_index(HANDLERS, gateway_status.status_index);
 						};
 					};
 				};
@@ -933,84 +1012,19 @@ module {
 		/// Returns messages to the WS Gateway in response of a polling iteration.
 		public func ws_get_messages(caller : Principal, args : CanisterWsGetMessagesArguments) : CanisterWsGetMessagesResult {
 			// check if the caller of this method is the WS Gateway that has been set during the initialization of the SDK
-			switch (check_is_registered_gateway(caller)) {
+			switch (WS_STATE.check_is_registered_gateway(caller)) {
 				case (#Err(err)) {
 					#Err(err);
 				};
 				case (_) {
-					get_cert_messages(caller, args.nonce);
+					WS_STATE.get_cert_messages(caller, args.nonce);
 				};
 			};
 		};
 
-		/// Sends a message to the client.
-		///
-		/// Under the hood, the message is serialized and certified, and then it is added to the queue of messages
-		/// that the WS Gateway will poll in the next iteration.
-		/// **Note**: you have to serialize the message to a `Blob` before calling this method. Use the `to_candid` function.
-		public func ws_send(client_key : ClientPublicKey, msg_bytes : Blob) : async CanisterWsSendResult {
-			// check if the client is registered
-			switch (check_registered_client_key(client_key)) {
-				case (#Err(err)) {
-					return #Err(err);
-				};
-				case (_) {
-					// do nothing
-				};
-			};
-
-			// get the principal of the gateway that is polling the canister
-			let gateway_principal = get_registered_gateway_principal();
-
-			// the nonce in key is used by the WS Gateway to determine the message to start in the polling iteration
-			// the key is also passed to the client in order to validate the body of the certified message
-			let outgoing_message_nonce = get_outgoing_message_nonce();
-			let key = get_message_for_gateway_key(gateway_principal, outgoing_message_nonce);
-
-			// increment the nonce for the next message
-			increment_outgoing_message_nonce();
-
-			// increment the sequence number for the next message to the client
-			switch (increment_outgoing_message_to_client_num(client_key)) {
-				case (#Err(err)) {
-					return #Err(err);
-				};
-				case (_) {
-					// do nothing
-				};
-			};
-
-			switch (get_outgoing_message_to_client_num(client_key)) {
-				case (#Err(err)) {
-					#Err(err);
-				};
-				case (#Ok(sequence_num)) {
-					let websocket_message : WebsocketMessage = {
-						client_key;
-						sequence_num;
-						timestamp = Nat64.fromIntWrap(get_current_time());
-						message = msg_bytes;
-					};
-
-					// CBOR serialize message of type WebsocketMessage
-					switch (encode_websocket_message(websocket_message)) {
-						case (#Err(err)) {
-							#Err(err);
-						};
-						case (#Ok(content)) {
-							// certify data
-							put_cert_for_message(key, content);
-
-							MESSAGES_FOR_GATEWAY := List.append(
-								MESSAGES_FOR_GATEWAY,
-								List.fromArray([{ client_key; content; key }]),
-							);
-
-							#Ok;
-						};
-					};
-				};
-			};
+		/// Sends a message to the client. See [ws_send] function for reference.
+		public func send(client_key : ClientPublicKey, msg_bytes : Blob) : async CanisterWsSendResult {
+			await ws_send(WS_STATE, client_key, msg_bytes);
 		};
 	};
 };
