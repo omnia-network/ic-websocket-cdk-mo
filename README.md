@@ -7,19 +7,31 @@ This repository contains the Motoko implementation of IC WebSocket CDK. For more
 
 ## Installation
 
-You can install the library using [mops](https://mops.one):
+You can install the library using [mops](https://mops.one) following these steps:
+
+- first, install the dependencies (this step won't be necessary when the **ic-websocket-cdk** will be available on [mops](https://mops.one)):
+  ```bash
+  mops add base@0.9.1
+  mops add ic-certification@0.1.1
+  mops add sha2@0.0.2
+  mops add cbor@0.1.3
+  ```
+- install the **ic-websocket-cdk**:
+  ```bash
+  mops add https://github.com/omnia-network/ic-websocket-cdk-mo#<last-commit-hash-on-this-repo>
+  ```
+
+For example, a valid installation script is:
 
 ```bash
-mops add https://github.com/omnia-network/ic-websocket-cdk-mo#<last-commit-hash-on-this-repo>
+mops add base@0.9.1
+mops add ic-certification@0.1.1
+mops add sha2@0.0.2
+mops add cbor@0.1.3
+mops add https://github.com/omnia-network/ic-websocket-cdk-mo#1d3320626e3c476632fc46ebdb9b5402e6207999
 ```
 
-For example, a valid installation line would be:
-
-```bash
-mops add https://github.com/omnia-network/ic-websocket-cdk-mo#c9970f76e74a9019f2a5c97b317b84b9cc13d808
-```
-
-It will also be available on **mops** soon.
+The **ic-websocket-cdk** package will be available on **mops** soon.
 
 ## Usage
 
