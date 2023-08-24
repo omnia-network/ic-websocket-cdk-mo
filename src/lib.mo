@@ -396,6 +396,42 @@ module {
 		};
 	};
 
+	class TmpClients() {
+		public var second_last_index_clients = List.nil<ClientPublicKey>();
+		public var last_index_clients = List.nil<ClientPublicKey>();
+
+		public func shift() {
+			second_last_index_clients := last_index_clients;
+			last_index_clients := List.nil<ClientPublicKey>();
+		};
+
+		public func clear() {
+			second_last_index_clients := List.nil<ClientPublicKey>();
+			last_index_clients := List.nil<ClientPublicKey>();
+		};
+
+		public func insert(client_key : ClientPublicKey) {
+			last_index_clients := List.push(client_key, last_index_clients);
+		};
+
+		public func contain_client(client_key : ClientPublicKey) : Bool {
+			switch (List.find(last_index_clients, func(c : ClientPublicKey) : Bool = Blob.equal(c, client_key))) {
+				case (?_) true;
+				case (_) {
+					switch (List.find(second_last_index_clients, func(c : ClientPublicKey) : Bool = Blob.equal(c, client_key))) {
+						case (?_) true;
+						case (_) false;
+					};
+				};
+			};
+		};
+
+		public func remove(client_key : ClientPublicKey) {
+			second_last_index_clients := List.filter(second_last_index_clients, func(c : ClientPublicKey) : Bool = not Blob.equal(c, client_key));
+			last_index_clients := List.filter(last_index_clients, func(c : ClientPublicKey) : Bool = not Blob.equal(c, client_key));
+		};
+	};
+
 	/// IC WebSocket class that holds the internal state of the IC WebSocket.
 	///
 	/// **Note**: you should only pass an instance of this class to the IcWebSocket class constructor, without using the methods or accessing the fields directly.
@@ -403,6 +439,8 @@ module {
 		//// STATE ////
 		/// Maps the client's public key to the client's identity (anonymous if not authenticated).
 		public var CLIENT_CALLER_MAP = HashMap.HashMap<ClientPublicKey, Principal>(0, Blob.equal, Blob.hash);
+		/// Maps the clients that still don't have a connection opem, based on the gateway stats index at which they were registered.
+		public let TMP_CLIENTS : TmpClients = TmpClients();
 		/// Maps the client's public key to the sequence number to use for the next outgoing message (to that client).
 		public var OUTGOING_MESSAGE_TO_CLIENT_NUM_MAP = HashMap.HashMap<ClientPublicKey, Nat64>(0, Blob.equal, Blob.hash);
 		/// Maps the client's public key to the expected sequence number of the next incoming message (from that client).
@@ -425,11 +463,18 @@ module {
 		public func reset_internal_state(handlers : WsHandlers) : async () {
 			// for each client, call the on_close handler before clearing the map
 			for (client_key in CLIENT_CALLER_MAP.keys()) {
-				await handlers.call_on_close({
-					client_key;
-				});
+				// If a client registers while the gateway crashes and restarts, we have to keep the client in the map,
+				// so that the ws_open invoked by the gateway doesn't fail.
+				// To be sure that we retain the latest unregistered clients,
+				// we keep all the clients that have registered after the last two times the gateway updated the status index
+				if (not is_client_in_tmp_clients(client_key)) {
+					await handlers.call_on_close({
+						client_key;
+					});
+
+					CLIENT_CALLER_MAP.delete(client_key);
+				};
 			};
-			CLIENT_CALLER_MAP := HashMap.HashMap<ClientPublicKey, Principal>(0, Blob.equal, Blob.hash);
 
 			OUTGOING_MESSAGE_TO_CLIENT_NUM_MAP := HashMap.HashMap<ClientPublicKey, Nat64>(0, Blob.equal, Blob.hash);
 			INCOMING_MESSAGE_FROM_CLIENT_NUM_MAP := HashMap.HashMap<ClientPublicKey, Nat64>(0, Blob.equal, Blob.hash);
@@ -449,6 +494,9 @@ module {
 
 		public func put_client_caller(client_key : ClientPublicKey, caller : Principal) {
 			CLIENT_CALLER_MAP.put(client_key, caller);
+
+			// add the client to the temporary clients
+			insert_in_tmp_clients(client_key);
 		};
 
 		public func get_client_caller(client_key : ClientPublicKey) : ?Principal {
@@ -457,6 +505,22 @@ module {
 
 		public func get_registered_gateway_principal() : Principal {
 			REGISTERED_GATEWAY.gateway_principal;
+		};
+
+		func insert_in_tmp_clients(client_key : ClientPublicKey) {
+			TMP_CLIENTS.insert(client_key);
+		};
+
+		func shift_tmp_clients() {
+			TMP_CLIENTS.shift();
+		};
+
+		func is_client_in_tmp_clients(client_key : ClientPublicKey) : Bool {
+			TMP_CLIENTS.contain_client(client_key);
+		};
+
+		func remove_client_from_tmp_clients(client_key : ClientPublicKey) {
+			TMP_CLIENTS.remove(client_key);
 		};
 
 		/// Updates the registered gateway with the new status index.
@@ -471,6 +535,9 @@ module {
 
 				#Ok;
 			} else {
+				// update the temporary clients, shifting the last index clients to the second last index clients
+				shift_tmp_clients();
+
 				REGISTERED_GATEWAY.update_status_index(status_index);
 			};
 		};
@@ -532,6 +599,9 @@ module {
 			init_expected_incoming_message_from_client_num(client_key);
 			// initialize outgoing message sequence number to 0
 			init_outgoing_message_to_client_num(client_key);
+
+			// now that the client is registered, remove it from the temporary clients
+			remove_client_from_tmp_clients(client_key);
 		};
 
 		public func remove_client(client_key : ClientPublicKey) {
@@ -748,6 +818,12 @@ module {
 
 			// if there's a registered gateway, reset its state
 			WS_STATE.REGISTERED_GATEWAY.reset();
+
+			// remove all clients from the map
+			WS_STATE.CLIENT_CALLER_MAP := HashMap.HashMap<ClientPublicKey, Principal>(0, Blob.equal, Blob.hash);
+
+			// clear the temporary clients
+			WS_STATE.TMP_CLIENTS.clear();
 
 			Logger.custom_print("Internal state has been wiped!");
 		};
