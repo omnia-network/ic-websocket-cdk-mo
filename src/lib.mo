@@ -20,6 +20,12 @@ import CborDecoder "mo:cbor/Decoder";
 import CborEncoder "mo:cbor/Encoder";
 import CertTree "mo:ic-certification/CertTree";
 import Sha256 "mo:sha2/Sha256";
+import Arg "mo:candid/Arg";
+import Decoder "mo:candid/Decoder";
+import Encoder "mo:candid/Encoder";
+import Tag "mo:candid/Tag";
+import Type "mo:candid/Type";
+import Value "mo:candid/Value";
 
 import Logger "Logger";
 
@@ -35,33 +41,27 @@ module {
 	let DEFAULT_CLIENT_KEEP_ALIVE_DELAY_MS : Nat64 = 10_000; // 10 seconds
 
 	//// TYPES ////
+	type CandidType = Type.Type;
+	type CandidValue = Value.Value;
+	type CandidTag = Tag.Tag;
 	/// Just to be compatible with the Rust version.
 	type Result<Ok, Err> = { #Ok : Ok; #Err : Err };
 
 	public type ClientPrincipal = Principal;
 
-	public class ClientKey(client_principal : ClientPrincipal, client_nonce : Nat64) {
-		public let client_principal : ClientPrincipal = client_principal;
-		public let client_nonce : Nat64 = client_nonce;
-
-		public func isEqual(other : ClientKey) : Bool {
-			Principal.equal(client_principal, other.client_principal) and Nat64.equal(client_nonce, other.client_nonce);
-		};
-
-		public func hash(k : ClientKey) : Hash.Hash {
-			Text.hash(k.toText());
-		};
-
-		public func toText() : Text {
-			Principal.toText(client_principal) # "_" # Nat64.toText(client_nonce);
-		};
+	public type ClientKey = {
+		client_principal : ClientPrincipal;
+		client_nonce : Nat64;
 	};
-	// functions needed for HashMaps
+	// functions needed for ClientKey
 	func areClientKeysEqual(k1 : ClientKey, k2 : ClientKey) : Bool {
-		k1.isEqual(k2);
+		Principal.equal(k1.client_principal, k2.client_principal) and Nat64.equal(k1.client_nonce, k2.client_nonce);
+	};
+	func clientKeyToText(k : ClientKey) : Text {
+		Principal.toText(k.client_principal) # "_" # Nat64.toText(k.client_nonce);
 	};
 	func hashClientKey(k : ClientKey) : Hash.Hash {
-		k.hash(k);
+		Text.hash(clientKeyToText(k));
 	};
 
 	/// The result of [ws_open].
@@ -132,19 +132,255 @@ module {
 	type CanisterOpenMessageContent = {
 		client_key : ClientKey;
 	};
+	let CanisterOpenMessageContentIdl : CandidType = #record([{
+		tag = #name("client_key");
+		type_ = #record([
+			{
+				tag = #name("client_principal");
+				type_ = #principal;
+			},
+			{
+				tag = #name("client_nonce");
+				type_ = #nat64;
+			},
+		]);
+	}]);
 
 	type CanisterAckMessageContent = {
 		last_incoming_sequence_num : Nat64;
 	};
+	let CanisterAckMessageContentIdl : CandidType = #record([{
+		tag = #name("last_incoming_sequence_num");
+		type_ = #nat64;
+	}]);
 
 	type ClientKeepAliveMessageContent = {
 		last_incoming_sequence_num : Nat64;
 	};
+	let ClientKeepAliveMessageContentIdl : CandidType = #record([{
+		tag = #name("last_incoming_sequence_num");
+		type_ = #nat64;
+	}]);
 
-	public type WebsocketServiceMessageContent = {
+	type WebsocketServiceMessageContent = {
 		#OpenMessage : CanisterOpenMessageContent;
 		#AckMessage : CanisterAckMessageContent;
 		#KeepAliveMessage : ClientKeepAliveMessageContent;
+	};
+
+	let WebsocketServiceMessageIdl : CandidType = #variant([
+		{
+			tag = #name("OpenMessage");
+			type_ = CanisterOpenMessageContentIdl;
+		},
+		{
+			tag = #name("AckMessage");
+			type_ = CanisterAckMessageContentIdl;
+		},
+		{
+			tag = #name("KeepAliveMessage");
+			type_ = ClientKeepAliveMessageContentIdl;
+		},
+	]);
+
+	func encode_websocket_service_message_content(content : WebsocketServiceMessageContent) : Blob {
+		let value : CandidValue = switch (content) {
+			case (#OpenMessage(open_content)) {
+				#variant({
+					tag = #name("OpenMessage");
+					value = #record([{
+						tag = #name("client_key");
+						value = #record([
+							{
+								tag = #name("client_principal");
+								value = #principal(open_content.client_key.client_principal);
+							},
+							{
+								tag = #name("client_nonce");
+								value = #nat64(open_content.client_key.client_nonce);
+							},
+						]);
+					}]);
+				});
+			};
+			case (#AckMessage(ack_content)) {
+				#variant({
+					tag = #name("AckMessage");
+					value = #record([{
+						tag = #name("last_incoming_sequence_num");
+						value = #nat64(ack_content.last_incoming_sequence_num);
+					}]);
+				});
+			};
+			case (#KeepAliveMessage(keep_alive_content)) {
+				#variant({
+					tag = #name("KeepAliveMessage");
+					value = #record([{
+						tag = #name("last_incoming_sequence_num");
+						value = #nat64(keep_alive_content.last_incoming_sequence_num);
+					}]);
+				});
+			};
+		};
+		let args : [Arg.Arg] = [{
+			type_ = WebsocketServiceMessageIdl;
+			value = #variant({
+				tag = #name("OpenMessage");
+				value;
+			});
+		}];
+
+		Encoder.encode(args);
+	};
+
+	func decode_websocket_service_message_content(bytes : Blob) : Result<WebsocketServiceMessageContent, Text> {
+		let args : [Arg.Arg] = switch (Decoder.decode(bytes)) {
+			case (null) {
+				return #Err("deserialization failed");
+			};
+			case (?args) {
+				args;
+			};
+		};
+
+		if (Array.size(args) != 1) {
+			return #Err("invalid number of arguments");
+		};
+
+		let arg = args[0];
+		switch (arg.value) {
+			case (#variant(content)) {
+				switch ((content.tag, content.value)) {
+					case ((#name("OpenMessage"), #record(open_message))) {
+						let open_message_content : WebsocketServiceMessageContent = #OpenMessage({
+							client_key = do {
+								let client_key_record = Array.find(
+									open_message,
+									func(rec : Value.RecordFieldValue) : Bool = switch (rec.tag) {
+										case (#name(n)) { n == "client_key" };
+										case (_) { false };
+									},
+								);
+								switch (client_key_record) {
+									case (?client_key_record) {
+										switch (client_key_record.value) {
+											case (#record(client_key)) {
+												let client_principal_field = Array.find(
+													client_key,
+													func(rec : Value.RecordFieldValue) : Bool = switch (rec.tag) {
+														case (#name(n)) { n == "client_principal" };
+														case (_) { false };
+													},
+												);
+												let client_nonce_field = Array.find(
+													client_key,
+													func(rec : Value.RecordFieldValue) : Bool = switch (rec.tag) {
+														case (#name(n)) { n == "client_nonce" };
+														case (_) { false };
+													},
+												);
+												switch ((client_principal_field, client_nonce_field)) {
+													case ((?client_principal, ?client_nonce)) {
+														switch ((client_principal.value, client_nonce.value)) {
+															case ((#principal(client_principal), #nat64(client_nonce))) {
+																{
+																	client_principal;
+																	client_nonce;
+																};
+															};
+															case (_) {
+																return #Err("invalid argument");
+															};
+														};
+													};
+													case (_) {
+														return #Err("invalid argument");
+													};
+												};
+											};
+											case (_) {
+												return #Err("invalid argument");
+											};
+										};
+									};
+									case (_) {
+										return #Err("missing field `client_key`");
+									};
+								};
+							};
+						});
+
+						#Ok(open_message_content);
+					};
+					case ((#name("AckMessage"), #record(ack_message))) {
+						let ack_message_content : WebsocketServiceMessageContent = #AckMessage({
+							last_incoming_sequence_num = do {
+								let last_incoming_record = Array.find(
+									ack_message,
+									func(rec : Value.RecordFieldValue) : Bool = switch (rec.tag) {
+										case ((#name(n))) { n == "last_incoming_sequence_num" };
+										case (_) { false };
+									},
+								);
+								switch (last_incoming_record) {
+									case (?last_incoming_record) {
+										switch (last_incoming_record.value) {
+											case (#nat64(last_incoming_sequence_num)) {
+												last_incoming_sequence_num;
+											};
+											case (_) {
+												return #Err("invalid argument");
+											};
+										};
+									};
+									case (_) {
+										return #Err("missing field `last_incoming_sequence_num`");
+									};
+								};
+							};
+						});
+
+						#Ok(ack_message_content);
+					};
+					case ((#name("KeepAliveMessage"), #record(keep_alive_message))) {
+						let keep_alive_message_content : WebsocketServiceMessageContent = #KeepAliveMessage({
+							last_incoming_sequence_num = do {
+								let last_incoming_record = Array.find(
+									keep_alive_message,
+									func(rec : Value.RecordFieldValue) : Bool = switch (rec.tag) {
+										case ((#name(n))) { n == "last_incoming_sequence_num" };
+										case (_) { false };
+									},
+								);
+								switch (last_incoming_record) {
+									case (?last_incoming_record) {
+										switch (last_incoming_record.value) {
+											case (#nat64(last_incoming_sequence_num)) {
+												last_incoming_sequence_num;
+											};
+											case (_) {
+												return #Err("invalid argument");
+											};
+										};
+									};
+									case (_) {
+										return #Err("missing field `last_incoming_sequence_num`");
+									};
+								};
+							};
+						});
+
+						#Ok(keep_alive_message_content);
+					};
+					case (_) {
+						return #Err("invalid argument");
+					};
+				};
+			};
+			case (_) {
+				return #Err("invalid argument");
+			};
+		};
 	};
 
 	/// Arguments passed to the `on_open` handler.
@@ -235,9 +471,9 @@ module {
 
 	/// Encodes the `WebsocketMessage` into a CBOR blob.
 	func encode_websocket_message(websocket_message : WebsocketMessage) : Result<Blob, Text> {
+		let principal_blob = Blob.toArray(Principal.toBlob(websocket_message.client_key.client_principal));
 		let cbor_value : CborValue.Value = #majorType5([
-			(#majorType3("client_key"), #majorType5([/* (#majorType3("client_principal"), #majorType0(websocket_message.client_key.client_principal)), */
-			(#majorType3("client_nonce"), #majorType0(websocket_message.client_key.client_nonce))])),
+			(#majorType3("client_key"), #majorType5([(#majorType3("client_principal"), #majorType2(principal_blob)), (#majorType3("client_nonce"), #majorType0(websocket_message.client_key.client_nonce))])),
 			(#majorType3("sequence_num"), #majorType0(websocket_message.sequence_num)),
 			(#majorType3("timestamp"), #majorType0(websocket_message.timestamp)),
 			(#majorType3("is_sequence_num"), #majorType7(#bool(websocket_message.is_service_message))),
@@ -272,8 +508,10 @@ module {
 											case (?(_, #majorType5(raw_client_key))) {
 												let client_principal_value = Array.find(raw_client_key, func((key, _) : (CborValue.Value, CborValue.Value)) : Bool = key == #majorType3("client_principal"));
 												let client_principal = switch (client_principal_value) {
-													case (?(_, #majorType0(client_principal))) {
-														Principal.fromText("");
+													case (?(_, #majorType2(client_principal_blob))) {
+														Principal.fromBlob(
+															Blob.fromArray(client_principal_blob)
+														);
 													};
 													case (_) {
 														return #Err("missing field `client_key.client_principal`");
@@ -289,7 +527,10 @@ module {
 													};
 												};
 
-												ClientKey(client_principal, client_nonce);
+												{
+													client_principal;
+													client_nonce;
+												};
 											};
 											case (_) {
 												return #Err("missing field `client_key`");
@@ -423,7 +664,7 @@ module {
 
 		public func check_registered_client(client_key : ClientKey) : Result<(), Text> {
 			if (not is_client_registered(client_key)) {
-				return #Err("client with key" # client_key.toText() # "doesn't have an open connection");
+				return #Err("client with key" # clientKeyToText(client_key) # "doesn't have an open connection");
 			};
 
 			#Ok;
@@ -742,17 +983,15 @@ module {
 	};
 
 	func send_service_message_to_client(ws_state : IcWebSocketState, client_key : ClientKey, message : WebsocketServiceMessageContent) : Result<(), Text> {
-		let message_bytes = to_candid (message);
+		let message_bytes = encode_websocket_service_message_content(message);
 		_ws_send(ws_state, client_key.client_principal, message_bytes, true);
 	};
 
 	/// Parameters for the IC WebSocket CDK initialization.
-	public class WsInitParams(init_ws_state : IcWebSocketState, init_handlers : WsHandlers, init_gateway_principal : Text) {
+	public class WsInitParams(init_ws_state : IcWebSocketState, init_handlers : WsHandlers) {
 		public var state : IcWebSocketState = init_ws_state;
 		/// The callback handlers for the WebSocket.
 		public var handlers : WsHandlers = init_handlers;
-		/// The principal of the WS Gateway that will be polling the canister.
-		public var gateway_principal : Principal = Principal.fromText(init_gateway_principal);
 		/// The interval at which to send an acknowledgement message to the client,
 		/// so that the client knows that all the messages it sent have been received by the canister (in milliseconds).
 		/// Defaults to `60_000` (60 seconds).
@@ -793,10 +1032,13 @@ module {
 				return #Err("caller is the registered gateway which can't open a connection for itself");
 			};
 
-			let client_key = ClientKey(caller, args.client_key.client_nonce);
+			let client_key : ClientKey = {
+				client_principal = caller;
+				client_nonce = args.client_key.client_nonce;
+			};
 			// check if client is not registered yet
 			if (WS_STATE.is_client_registered(client_key)) {
-				return #Err("client with key" # client_key.toText() # "already has an open connection");
+				return #Err("client with key" # clientKeyToText(client_key) # "already has an open connection");
 			};
 
 			// initialize client maps
@@ -849,7 +1091,7 @@ module {
 		};
 
 		/// Handles the WS messages received either directly from the client or relayed by the WS Gateway.
-		public func ws_message(caller : Principal, args : CanisterWsMessageArguments, _t : ?Any) : async CanisterWsMessageResult {
+		public func ws_message(caller : Principal, args : CanisterWsMessageArguments) : async CanisterWsMessageResult {
 			// check if client registered its principal by calling ws_open
 			let registered_client_key = switch (WS_STATE.get_client_key_from_principal(caller)) {
 				case (#Err(err)) {
@@ -869,7 +1111,7 @@ module {
 			} = args.msg;
 
 			// check if the client key is correct
-			if (not registered_client_key.isEqual(client_key)) {
+			if (not areClientKeysEqual(registered_client_key, client_key)) {
 				return #Err("client with principal" #Principal.toText(caller) # "has a different key than the one used in the message");
 			};
 
@@ -934,12 +1176,11 @@ module {
 		};
 
 		func handle_keep_alive_client_message(client_key : ClientKey, content : Blob) : async Result<(), Text> {
-			let decoded : ?WebsocketServiceMessageContent = from_candid (content);
-			let message_content = switch (decoded) {
-				case (null) {
-					return #Err("Error decoding service message from client");
+			let message_content : WebsocketServiceMessageContent = switch (decode_websocket_service_message_content(content)) {
+				case (#Err(err)) {
+					return #Err(err);
 				};
-				case (?message_content) {
+				case (#Ok(message_content)) {
 					message_content;
 				};
 			};
