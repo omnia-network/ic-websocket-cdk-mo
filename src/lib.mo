@@ -77,7 +77,7 @@ module {
 
 	/// The arguments for [ws_open].
 	public type CanisterWsOpenArguments = {
-		client_key : ClientKey;
+		client_nonce : Nat64;
 	};
 
 	/// The arguments for [ws_close].
@@ -224,10 +224,7 @@ module {
 		};
 		let args : [Arg.Arg] = [{
 			type_ = WebsocketServiceMessageIdl;
-			value = #variant({
-				tag = #name("OpenMessage");
-				value;
-			});
+			value;
 		}];
 
 		Encoder.encode(args);
@@ -476,7 +473,7 @@ module {
 			(#majorType3("client_key"), #majorType5([(#majorType3("client_principal"), #majorType2(principal_blob)), (#majorType3("client_nonce"), #majorType0(websocket_message.client_key.client_nonce))])),
 			(#majorType3("sequence_num"), #majorType0(websocket_message.sequence_num)),
 			(#majorType3("timestamp"), #majorType0(websocket_message.timestamp)),
-			(#majorType3("is_sequence_num"), #majorType7(#bool(websocket_message.is_service_message))),
+			(#majorType3("is_service_message"), #majorType7(#bool(websocket_message.is_service_message))),
 			(#majorType3("content"), #majorType2(Blob.toArray(websocket_message.content))),
 		]);
 
@@ -1034,7 +1031,7 @@ module {
 
 			let client_key : ClientKey = {
 				client_principal = caller;
-				client_nonce = args.client_key.client_nonce;
+				client_nonce = args.client_nonce;
 			};
 			// check if client is not registered yet
 			if (WS_STATE.is_client_registered(client_key)) {
