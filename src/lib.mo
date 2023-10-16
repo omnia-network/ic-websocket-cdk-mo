@@ -33,12 +33,12 @@ module {
 	//// CONSTANTS ////
 	/// The label used when constructing the certification tree.
 	let LABEL_WEBSOCKET : Blob = "websocket";
-	/// The maximum number of messages returned by [ws_get_messages] at each poll.
-	let MAX_NUMBER_OF_RETURNED_MESSAGES : Nat = 10;
-	/// The default delay between two consecutive acknowledgements sent to the client.
-	let DEFAULT_SEND_ACK_DELAY_MS : Nat64 = 60_000; // 60 seconds
-	/// The default delay to wait for the client to send a keep alive after receiving an acknowledgement.
-	let DEFAULT_CLIENT_KEEP_ALIVE_DELAY_MS : Nat64 = 10_000; // 10 seconds
+	/// The default maximum number of messages returned by [ws_get_messages] at each poll.
+	let DEFAULT_MAX_NUMBER_OF_RETURNED_MESSAGES : Nat = 10;
+	/// The default interval at which to send acknowledgements to the client.
+	let DEFAULT_SEND_ACK_INTERVAL_MS : Nat64 = 60_000; // 60 seconds
+	/// The default timeout to wait for the client to send a keep alive after receiving an acknowledgement.
+	let DEFAULT_CLIENT_KEEP_ALIVE_TIMEOUT_MS : Nat64 = 10_000; // 10 seconds
 
 	//// TYPES ////
 	type CandidType = Type.Type;
@@ -63,6 +63,16 @@ module {
 	func hashClientKey(k : ClientKey) : Hash.Hash {
 		Text.hash(clientKeyToText(k));
 	};
+	let ClientKeyIdl : CandidType = #record([
+		{
+			tag = #name("client_principal");
+			type_ = #principal;
+		},
+		{
+			tag = #name("client_nonce");
+			type_ = #nat64;
+		},
+	]);
 
 	/// The result of [ws_open].
 	public type CanisterWsOpenResult = Result<(), Text>;
@@ -103,369 +113,6 @@ module {
 		is_service_message : Bool; // Whether the message is a service message sent by the CDK to the client or vice versa.
 		content : Blob; // Application message encoded in binary.
 	};
-
-	/// Element of the list of messages returned to the WS Gateway after polling.
-	public type CanisterOutputMessage = {
-		client_key : ClientKey; // The client that the gateway will forward the message to.
-		key : Text; // Key for certificate verification.
-		content : Blob; // The message to be relayed, that contains the application message.
-	};
-
-	/// List of messages returned to the WS Gateway after polling.
-	public type CanisterOutputCertifiedMessages = {
-		messages : [CanisterOutputMessage]; // List of messages.
-		cert : Blob; // cert+tree constitute the certificate for all returned messages.
-		tree : Blob; // cert+tree constitute the certificate for all returned messages.
-	};
-
-	/// Contains data about the registered WS Gateway.
-	class RegisteredGateway(gw_principal : Principal) {
-		/// The principal of the gateway.
-		public var gateway_principal : Principal = gw_principal;
-	};
-
-	/// The metadata about a registered client.
-	class RegisteredClient() {
-		public var last_keep_alive_timestamp : Nat64 = Nat64.fromIntWrap(get_current_time());
-	};
-
-	type CanisterOpenMessageContent = {
-		client_key : ClientKey;
-	};
-	let CanisterOpenMessageContentIdl : CandidType = #record([{
-		tag = #name("client_key");
-		type_ = #record([
-			{
-				tag = #name("client_principal");
-				type_ = #principal;
-			},
-			{
-				tag = #name("client_nonce");
-				type_ = #nat64;
-			},
-		]);
-	}]);
-
-	type CanisterAckMessageContent = {
-		last_incoming_sequence_num : Nat64;
-	};
-	let CanisterAckMessageContentIdl : CandidType = #record([{
-		tag = #name("last_incoming_sequence_num");
-		type_ = #nat64;
-	}]);
-
-	type ClientKeepAliveMessageContent = {
-		last_incoming_sequence_num : Nat64;
-	};
-	let ClientKeepAliveMessageContentIdl : CandidType = #record([{
-		tag = #name("last_incoming_sequence_num");
-		type_ = #nat64;
-	}]);
-
-	type WebsocketServiceMessageContent = {
-		#OpenMessage : CanisterOpenMessageContent;
-		#AckMessage : CanisterAckMessageContent;
-		#KeepAliveMessage : ClientKeepAliveMessageContent;
-	};
-
-	let WebsocketServiceMessageIdl : CandidType = #variant([
-		{
-			tag = #name("OpenMessage");
-			type_ = CanisterOpenMessageContentIdl;
-		},
-		{
-			tag = #name("AckMessage");
-			type_ = CanisterAckMessageContentIdl;
-		},
-		{
-			tag = #name("KeepAliveMessage");
-			type_ = ClientKeepAliveMessageContentIdl;
-		},
-	]);
-
-	func encode_websocket_service_message_content(content : WebsocketServiceMessageContent) : Blob {
-		let value : CandidValue = switch (content) {
-			case (#OpenMessage(open_content)) {
-				#variant({
-					tag = #name("OpenMessage");
-					value = #record([{
-						tag = #name("client_key");
-						value = #record([
-							{
-								tag = #name("client_principal");
-								value = #principal(open_content.client_key.client_principal);
-							},
-							{
-								tag = #name("client_nonce");
-								value = #nat64(open_content.client_key.client_nonce);
-							},
-						]);
-					}]);
-				});
-			};
-			case (#AckMessage(ack_content)) {
-				#variant({
-					tag = #name("AckMessage");
-					value = #record([{
-						tag = #name("last_incoming_sequence_num");
-						value = #nat64(ack_content.last_incoming_sequence_num);
-					}]);
-				});
-			};
-			case (#KeepAliveMessage(keep_alive_content)) {
-				#variant({
-					tag = #name("KeepAliveMessage");
-					value = #record([{
-						tag = #name("last_incoming_sequence_num");
-						value = #nat64(keep_alive_content.last_incoming_sequence_num);
-					}]);
-				});
-			};
-		};
-		let args : [Arg.Arg] = [{
-			type_ = WebsocketServiceMessageIdl;
-			value;
-		}];
-
-		Encoder.encode(args);
-	};
-
-	func decode_websocket_service_message_content(bytes : Blob) : Result<WebsocketServiceMessageContent, Text> {
-		let args : [Arg.Arg] = switch (Decoder.decode(bytes)) {
-			case (null) {
-				return #Err("deserialization failed");
-			};
-			case (?args) {
-				args;
-			};
-		};
-
-		if (Array.size(args) != 1) {
-			return #Err("invalid number of arguments");
-		};
-
-		let arg = args[0];
-		switch (arg.value) {
-			case (#variant(content)) {
-				switch ((content.tag, content.value)) {
-					case ((#name("OpenMessage"), #record(open_message))) {
-						let open_message_content : WebsocketServiceMessageContent = #OpenMessage({
-							client_key = do {
-								let client_key_record = Array.find(
-									open_message,
-									func(rec : Value.RecordFieldValue) : Bool = switch (rec.tag) {
-										case (#name(n)) { n == "client_key" };
-										case (_) { false };
-									},
-								);
-								switch (client_key_record) {
-									case (?client_key_record) {
-										switch (client_key_record.value) {
-											case (#record(client_key)) {
-												let client_principal_field = Array.find(
-													client_key,
-													func(rec : Value.RecordFieldValue) : Bool = switch (rec.tag) {
-														case (#name(n)) { n == "client_principal" };
-														case (_) { false };
-													},
-												);
-												let client_nonce_field = Array.find(
-													client_key,
-													func(rec : Value.RecordFieldValue) : Bool = switch (rec.tag) {
-														case (#name(n)) { n == "client_nonce" };
-														case (_) { false };
-													},
-												);
-												switch ((client_principal_field, client_nonce_field)) {
-													case ((?client_principal, ?client_nonce)) {
-														switch ((client_principal.value, client_nonce.value)) {
-															case ((#principal(client_principal), #nat64(client_nonce))) {
-																{
-																	client_principal;
-																	client_nonce;
-																};
-															};
-															case (_) {
-																return #Err("invalid argument");
-															};
-														};
-													};
-													case (_) {
-														return #Err("invalid argument");
-													};
-												};
-											};
-											case (_) {
-												return #Err("invalid argument");
-											};
-										};
-									};
-									case (_) {
-										return #Err("missing field `client_key`");
-									};
-								};
-							};
-						});
-
-						#Ok(open_message_content);
-					};
-					case ((#name("AckMessage"), #record(ack_message))) {
-						let ack_message_content : WebsocketServiceMessageContent = #AckMessage({
-							last_incoming_sequence_num = do {
-								let last_incoming_record = Array.find(
-									ack_message,
-									func(rec : Value.RecordFieldValue) : Bool = switch (rec.tag) {
-										case ((#name(n))) { n == "last_incoming_sequence_num" };
-										case (_) { false };
-									},
-								);
-								switch (last_incoming_record) {
-									case (?last_incoming_record) {
-										switch (last_incoming_record.value) {
-											case (#nat64(last_incoming_sequence_num)) {
-												last_incoming_sequence_num;
-											};
-											case (_) {
-												return #Err("invalid argument");
-											};
-										};
-									};
-									case (_) {
-										return #Err("missing field `last_incoming_sequence_num`");
-									};
-								};
-							};
-						});
-
-						#Ok(ack_message_content);
-					};
-					case ((#name("KeepAliveMessage"), #record(keep_alive_message))) {
-						let keep_alive_message_content : WebsocketServiceMessageContent = #KeepAliveMessage({
-							last_incoming_sequence_num = do {
-								let last_incoming_record = Array.find(
-									keep_alive_message,
-									func(rec : Value.RecordFieldValue) : Bool = switch (rec.tag) {
-										case ((#name(n))) { n == "last_incoming_sequence_num" };
-										case (_) { false };
-									},
-								);
-								switch (last_incoming_record) {
-									case (?last_incoming_record) {
-										switch (last_incoming_record.value) {
-											case (#nat64(last_incoming_sequence_num)) {
-												last_incoming_sequence_num;
-											};
-											case (_) {
-												return #Err("invalid argument");
-											};
-										};
-									};
-									case (_) {
-										return #Err("missing field `last_incoming_sequence_num`");
-									};
-								};
-							};
-						});
-
-						#Ok(keep_alive_message_content);
-					};
-					case (_) {
-						return #Err("invalid argument");
-					};
-				};
-			};
-			case (_) {
-				return #Err("invalid argument");
-			};
-		};
-	};
-
-	/// Arguments passed to the `on_open` handler.
-	public type OnOpenCallbackArgs = {
-		client_principal : ClientPrincipal;
-	};
-	/// Handler initialized by the canister and triggered by the CDK once the IC WebSocket connection
-	/// is established.
-	public type OnOpenCallback = (OnOpenCallbackArgs) -> async ();
-
-	/// Arguments passed to the `on_message` handler.
-	public type OnMessageCallbackArgs = {
-		client_principal : ClientPrincipal;
-		message : Blob;
-	};
-	/// Handler initialized by the canister and triggered by the CDK once a message is received by
-	/// the CDK.
-	public type OnMessageCallback = (OnMessageCallbackArgs) -> async ();
-
-	/// Arguments passed to the `on_close` handler.
-	public type OnCloseCallbackArgs = {
-		client_principal : ClientPrincipal;
-	};
-	/// Handler initialized by the canister and triggered by the CDK once the WS Gateway closes the
-	/// IC WebSocket connection.
-	public type OnCloseCallback = (OnCloseCallbackArgs) -> async ();
-
-	//// FUNCTIONS ////
-	func get_current_time() : Time.Time {
-		Time.now();
-	};
-
-	/// Handlers initialized by the canister and triggered by the CDK.
-	public class WsHandlers(
-		init_on_open : ?OnOpenCallback,
-		init_on_message : ?OnMessageCallback,
-		init_on_close : ?OnCloseCallback,
-	) {
-		var on_open : ?OnOpenCallback = init_on_open;
-		var on_message : ?OnMessageCallback = init_on_message;
-		var on_close : ?OnCloseCallback = init_on_close;
-
-		public func call_on_open(args : OnOpenCallbackArgs) : async () {
-			switch (on_open) {
-				case (?callback) {
-					try {
-						await callback(args);
-					} catch (err) {
-						Logger.custom_print("Error calling on_open handler: " # Error.message(err));
-					};
-				};
-				case (null) {
-					// Do nothing.
-				};
-			};
-		};
-
-		public func call_on_message(args : OnMessageCallbackArgs) : async () {
-			switch (on_message) {
-				case (?callback) {
-					try {
-						await callback(args);
-					} catch (err) {
-						Logger.custom_print("Error calling on_message handler: " # Error.message(err));
-					};
-				};
-				case (null) {
-					// Do nothing.
-				};
-			};
-		};
-
-		public func call_on_close(args : OnCloseCallbackArgs) : async () {
-			switch (on_close) {
-				case (?callback) {
-					try {
-						await callback(args);
-					} catch (err) {
-						Logger.custom_print("Error calling on_close handler: " # Error.message(err));
-					};
-				};
-				case (null) {
-					// Do nothing.
-				};
-			};
-		};
-	};
-
 	/// Encodes the `WebsocketMessage` into a CBOR blob.
 	func encode_websocket_message(websocket_message : WebsocketMessage) : Result<Blob, Text> {
 		let principal_blob = Blob.toArray(Principal.toBlob(websocket_message.client_key.client_principal));
@@ -593,10 +240,347 @@ module {
 		};
 	};
 
+	/// Element of the list of messages returned to the WS Gateway after polling.
+	public type CanisterOutputMessage = {
+		client_key : ClientKey; // The client that the gateway will forward the message to.
+		key : Text; // Key for certificate verification.
+		content : Blob; // The message to be relayed, that contains the application message.
+	};
+
+	/// List of messages returned to the WS Gateway after polling.
+	public type CanisterOutputCertifiedMessages = {
+		messages : [CanisterOutputMessage]; // List of messages.
+		cert : Blob; // cert+tree constitute the certificate for all returned messages.
+		tree : Blob; // cert+tree constitute the certificate for all returned messages.
+	};
+
+	/// Contains data about the registered WS Gateway.
+	class RegisteredGateway(gw_principal : Principal) {
+		/// The principal of the gateway.
+		public var gateway_principal : Principal = gw_principal;
+	};
+
+	/// The metadata about a registered client.
+	class RegisteredClient() {
+		public var last_keep_alive_timestamp : Nat64 = get_current_time();
+	};
+
+	type CanisterOpenMessageContent = {
+		client_key : ClientKey;
+	};
+	let CanisterOpenMessageContentIdl : CandidType = #record([{
+		tag = #name("client_key");
+		type_ = ClientKeyIdl;
+	}]);
+
+	type CanisterAckMessageContent = {
+		last_incoming_sequence_num : Nat64;
+	};
+	let CanisterAckMessageContentIdl : CandidType = #record([{
+		tag = #name("last_incoming_sequence_num");
+		type_ = #nat64;
+	}]);
+
+	type ClientKeepAliveMessageContent = {
+		last_incoming_sequence_num : Nat64;
+	};
+	let ClientKeepAliveMessageContentIdl : CandidType = #record([{
+		tag = #name("last_incoming_sequence_num");
+		type_ = #nat64;
+	}]);
+
+	type WebsocketServiceMessageContent = {
+		#OpenMessage : CanisterOpenMessageContent;
+		#AckMessage : CanisterAckMessageContent;
+		#KeepAliveMessage : ClientKeepAliveMessageContent;
+	};
+	let WebsocketServiceMessageIdl : CandidType = #variant([
+		{
+			tag = #name("OpenMessage");
+			type_ = CanisterOpenMessageContentIdl;
+		},
+		{
+			tag = #name("AckMessage");
+			type_ = CanisterAckMessageContentIdl;
+		},
+		{
+			tag = #name("KeepAliveMessage");
+			type_ = ClientKeepAliveMessageContentIdl;
+		},
+	]);
+	func encode_websocket_service_message_content(content : WebsocketServiceMessageContent) : Blob {
+		let value : CandidValue = switch (content) {
+			case (#OpenMessage(open_content)) {
+				#variant({
+					tag = #name("OpenMessage");
+					value = #record([{
+						tag = #name("client_key");
+						value = #record([
+							{
+								tag = #name("client_principal");
+								value = #principal(open_content.client_key.client_principal);
+							},
+							{
+								tag = #name("client_nonce");
+								value = #nat64(open_content.client_key.client_nonce);
+							},
+						]);
+					}]);
+				});
+			};
+			case (#AckMessage(ack_content)) {
+				#variant({
+					tag = #name("AckMessage");
+					value = #record([{
+						tag = #name("last_incoming_sequence_num");
+						value = #nat64(ack_content.last_incoming_sequence_num);
+					}]);
+				});
+			};
+			case (#KeepAliveMessage(keep_alive_content)) {
+				#variant({
+					tag = #name("KeepAliveMessage");
+					value = #record([{
+						tag = #name("last_incoming_sequence_num");
+						value = #nat64(keep_alive_content.last_incoming_sequence_num);
+					}]);
+				});
+			};
+		};
+		let args : [Arg.Arg] = [{
+			type_ = WebsocketServiceMessageIdl;
+			value;
+		}];
+
+		Encoder.encode(args);
+	};
+	func decode_websocket_service_message_content(bytes : Blob) : Result<WebsocketServiceMessageContent, Text> {
+		let args : [Arg.Arg] = switch (Decoder.decode(bytes)) {
+			case (null) {
+				return #Err("Error decoding service message content: decoder returned null value");
+			};
+			case (?args) {
+				args;
+			};
+		};
+
+		if (Array.size(args) != 1) {
+			return #Err("invalid number of arguments");
+		};
+
+		let arg = args[0];
+		switch (arg.value) {
+			case (#variant(content)) {
+				switch (content.value) {
+					case (#record(variant_content)) {
+						if (Tag.equal(content.tag, #name("OpenMessage"))) {
+							let open_message_content : WebsocketServiceMessageContent = #OpenMessage({
+								client_key = do {
+									let client_key_record = Array.find(
+										variant_content,
+										func(rec : Value.RecordFieldValue) : Bool = Tag.equal(rec.tag, #name("client_key")),
+									);
+									switch (client_key_record) {
+										case (?client_key_record) {
+											switch (client_key_record.value) {
+												case (#record(client_key)) {
+													let client_principal_field = Array.find(
+														client_key,
+														func(rec : Value.RecordFieldValue) : Bool = Tag.equal(rec.tag, #name("client_principal")),
+													);
+													let client_nonce_field = Array.find(
+														client_key,
+														func(rec : Value.RecordFieldValue) : Bool = Tag.equal(rec.tag, #name("client_nonce")),
+													);
+													switch ((client_principal_field, client_nonce_field)) {
+														case ((?client_principal, ?client_nonce)) {
+															switch ((client_principal.value, client_nonce.value)) {
+																case ((#principal(client_principal), #nat64(client_nonce))) {
+																	{
+																		client_principal;
+																		client_nonce;
+																	};
+																};
+																case (invalid_arg) {
+																	return #Err("invalid argument: " # debug_show (invalid_arg));
+																};
+															};
+														};
+														case (invalid_arg) {
+															return #Err("invalid argument: " # debug_show (invalid_arg));
+														};
+													};
+												};
+												case (invalid_arg) {
+													return #Err("invalid argument: " # debug_show (invalid_arg));
+												};
+											};
+										};
+										case (_) {
+											return #Err("missing field `client_key`");
+										};
+									};
+								};
+							});
+
+							return #Ok(open_message_content);
+						} else if (Tag.equal(content.tag, #name("AckMessage"))) {
+							let ack_message_content : WebsocketServiceMessageContent = #AckMessage({
+								last_incoming_sequence_num = do {
+									let last_incoming_record = Array.find(
+										variant_content,
+										func(rec : Value.RecordFieldValue) : Bool = Tag.equal(rec.tag, #name("last_incoming_sequence_num")),
+									);
+									switch (last_incoming_record) {
+										case (?last_incoming_record) {
+											switch (last_incoming_record.value) {
+												case (#nat64(last_incoming_sequence_num)) {
+													last_incoming_sequence_num;
+												};
+												case (invalid_arg) {
+													return #Err("invalid argument: " # debug_show (invalid_arg));
+												};
+											};
+										};
+										case (_) {
+											return #Err("missing field `last_incoming_sequence_num`");
+										};
+									};
+								};
+							});
+
+							return #Ok(ack_message_content);
+						} else if (Tag.equal(content.tag, #name("KeepAliveMessage"))) {
+							let keep_alive_message_content : WebsocketServiceMessageContent = #KeepAliveMessage({
+								last_incoming_sequence_num = do {
+									let last_incoming_record = Array.find(
+										variant_content,
+										func(rec : Value.RecordFieldValue) : Bool = Tag.equal(rec.tag, #name("last_incoming_sequence_num")),
+									);
+									switch (last_incoming_record) {
+										case (?last_incoming_record) {
+											switch (last_incoming_record.value) {
+												case (#nat64(last_incoming_sequence_num)) {
+													last_incoming_sequence_num;
+												};
+												case (invalid_arg) {
+													return #Err("invalid argument: " # debug_show (invalid_arg));
+												};
+											};
+										};
+										case (_) {
+											return #Err("missing field `last_incoming_sequence_num`");
+										};
+									};
+								};
+							});
+
+							return #Ok(keep_alive_message_content);
+						} else {
+							return #Err("invalid variant tag: " # debug_show (content.tag));
+						};
+					};
+					case (invalid_variant) {
+						return #Err("invalid variant: " # debug_show (invalid_variant));
+					};
+				};
+			};
+			case (invalid_arg) {
+				return #Err("invalid argument: " # debug_show (invalid_arg));
+			};
+		};
+	};
+
+	/// Arguments passed to the `on_open` handler.
+	public type OnOpenCallbackArgs = {
+		client_principal : ClientPrincipal;
+	};
+	/// Handler initialized by the canister and triggered by the CDK once the IC WebSocket connection
+	/// is established.
+	public type OnOpenCallback = (OnOpenCallbackArgs) -> async ();
+
+	/// Arguments passed to the `on_message` handler.
+	public type OnMessageCallbackArgs = {
+		client_principal : ClientPrincipal;
+		message : Blob;
+	};
+	/// Handler initialized by the canister and triggered by the CDK once a message is received by
+	/// the CDK.
+	public type OnMessageCallback = (OnMessageCallbackArgs) -> async ();
+
+	/// Arguments passed to the `on_close` handler.
+	public type OnCloseCallbackArgs = {
+		client_principal : ClientPrincipal;
+	};
+	/// Handler initialized by the canister and triggered by the CDK once the WS Gateway closes the
+	/// IC WebSocket connection.
+	public type OnCloseCallback = (OnCloseCallbackArgs) -> async ();
+
+	//// FUNCTIONS ////
+	func get_current_time() : Nat64 {
+		Nat64.fromIntWrap(Time.now());
+	};
+
+	/// Handlers initialized by the canister and triggered by the CDK.
+	public class WsHandlers(
+		init_on_open : ?OnOpenCallback,
+		init_on_message : ?OnMessageCallback,
+		init_on_close : ?OnCloseCallback,
+	) {
+		var on_open : ?OnOpenCallback = init_on_open;
+		var on_message : ?OnMessageCallback = init_on_message;
+		var on_close : ?OnCloseCallback = init_on_close;
+
+		public func call_on_open(args : OnOpenCallbackArgs) : async () {
+			switch (on_open) {
+				case (?callback) {
+					try {
+						await callback(args);
+					} catch (err) {
+						Logger.custom_print("Error calling on_open handler: " # Error.message(err));
+					};
+				};
+				case (null) {
+					// Do nothing.
+				};
+			};
+		};
+
+		public func call_on_message(args : OnMessageCallbackArgs) : async () {
+			switch (on_message) {
+				case (?callback) {
+					try {
+						await callback(args);
+					} catch (err) {
+						Logger.custom_print("Error calling on_message handler: " # Error.message(err));
+					};
+				};
+				case (null) {
+					// Do nothing.
+				};
+			};
+		};
+
+		public func call_on_close(args : OnCloseCallbackArgs) : async () {
+			switch (on_close) {
+				case (?callback) {
+					try {
+						await callback(args);
+					} catch (err) {
+						Logger.custom_print("Error calling on_close handler: " # Error.message(err));
+					};
+				};
+				case (null) {
+					// Do nothing.
+				};
+			};
+		};
+	};
+
 	/// IC WebSocket class that holds the internal state of the IC WebSocket.
 	///
 	/// **Note**: you should only pass an instance of this class to the IcWebSocket class constructor, without using the methods or accessing the fields directly.
-	public class IcWebSocketState(gateway_principal : Text) {
+	public class IcWebSocketState(gateway_principal : Text) = self {
 		//// STATE ////
 		/// Maps the client's key to the client metadata
 		public var REGISTERED_CLIENTS = HashMap.HashMap<ClientKey, RegisteredClient>(0, areClientKeysEqual, hashClientKey);
@@ -617,6 +601,10 @@ module {
 		/// - the WS Gateway uses to specify the first index of the certified messages to be returned when polling
 		/// - the client uses as part of the path in the Merkle tree in order to verify the certificate of the messages relayed by the WS Gateway
 		public var OUTGOING_MESSAGE_NONCE : Nat64 = 0;
+		/// The acknowledgement active timer.
+		public var ACK_TIMER : ?Timer.TimerId = null;
+		// /// The keep alive active timer.
+		public var KEEP_ALIVE_TIMER : ?Timer.TimerId = null;
 
 		//// FUNCTIONS ////
 		/// Resets all state to the initial state.
@@ -655,29 +643,16 @@ module {
 		public func get_client_key_from_principal(client_principal : ClientPrincipal) : Result<ClientKey, Text> {
 			switch (CURRENT_CLIENT_KEY_MAP.get(client_principal)) {
 				case (?client_key) #Ok(client_key);
-				case (null) #Err("client with principal" # Principal.toText(client_principal) # "doesn't have an open connection");
+				case (null) #Err("client with principal " # Principal.toText(client_principal) # " doesn't have an open connection");
 			};
 		};
 
 		public func check_registered_client(client_key : ClientKey) : Result<(), Text> {
 			if (not is_client_registered(client_key)) {
-				return #Err("client with key" # clientKeyToText(client_key) # "doesn't have an open connection");
+				return #Err("client with key " # clientKeyToText(client_key) # " doesn't have an open connection");
 			};
 
 			#Ok;
-		};
-
-		public func update_last_keep_alive_timestamp_for_client(client_key : ClientKey) {
-			let client = REGISTERED_CLIENTS.get(client_key);
-			switch (client) {
-				case (?client_metadata) {
-					client_metadata.last_keep_alive_timestamp := Nat64.fromIntWrap(get_current_time());
-					REGISTERED_CLIENTS.put(client_key, client_metadata);
-				};
-				case (null) {
-					// Do nothing.
-				};
-			};
 		};
 
 		public func get_registered_gateway_principal() : Principal {
@@ -764,14 +739,14 @@ module {
 			Principal.toText(gateway_principal) # "_" # nonce_to_text;
 		};
 
-		func get_messages_for_gateway_range(gateway_principal : Principal, nonce : Nat64) : (Nat, Nat) {
+		func get_messages_for_gateway_range(gateway_principal : Principal, nonce : Nat64, max_number_of_returned_messages : Nat) : (Nat, Nat) {
 			let queue_len = List.size(MESSAGES_FOR_GATEWAY);
 
 			if (nonce == 0 and queue_len > 0) {
 				// this is the case in which the poller on the gateway restarted
-				// the range to return is end:last index and start: max(end - MAX_NUMBER_OF_RETURNED_MESSAGES, 0)
-				let start_index = if (queue_len > MAX_NUMBER_OF_RETURNED_MESSAGES) {
-					(queue_len - MAX_NUMBER_OF_RETURNED_MESSAGES) : Nat;
+				// the range to return is end:last index and start: max(end - max_number_of_returned_messages, 0)
+				let start_index = if (queue_len > max_number_of_returned_messages) {
+					(queue_len - max_number_of_returned_messages) : Nat;
 				} else {
 					0;
 				};
@@ -792,8 +767,8 @@ module {
 				List.size(partitions.0);
 			};
 			var end_index = queue_len;
-			if (((end_index - start_index) : Nat) > MAX_NUMBER_OF_RETURNED_MESSAGES) {
-				end_index := start_index + MAX_NUMBER_OF_RETURNED_MESSAGES;
+			if (((end_index - start_index) : Nat) > max_number_of_returned_messages) {
+				end_index := start_index + max_number_of_returned_messages;
 			};
 
 			(start_index, end_index);
@@ -816,8 +791,8 @@ module {
 			List.reverse(messages);
 		};
 
-		public func get_cert_messages(gateway_principal : Principal, nonce : Nat64) : CanisterWsGetMessagesResult {
-			let (start_index, end_index) = get_messages_for_gateway_range(gateway_principal, nonce);
+		public func get_cert_messages(gateway_principal : Principal, nonce : Nat64, max_number_of_returned_messages : Nat) : CanisterWsGetMessagesResult {
+			let (start_index, end_index) = get_messages_for_gateway_range(gateway_principal, nonce, max_number_of_returned_messages);
 			let messages = get_messages_for_gateway(start_index, end_index);
 
 			if (List.isNil(messages)) {
@@ -887,6 +862,137 @@ module {
 				case (null) Prelude.unreachable();
 			};
 		};
+
+		func put_ack_timet_id(timer_id : Timer.TimerId) {
+			ACK_TIMER := ?timer_id;
+		};
+
+		func reset_ack_timer() {
+			switch (ACK_TIMER) {
+				case (?value) {
+					Timer.cancelTimer(value);
+					ACK_TIMER := null;
+				};
+				case (null) {
+					// Do nothing
+				};
+			};
+		};
+
+		func put_keep_alive_timer_id(timer_id : Timer.TimerId) {
+			KEEP_ALIVE_TIMER := ?timer_id;
+		};
+
+		func reset_keep_alive_timer() {
+			switch (KEEP_ALIVE_TIMER) {
+				case (?value) {
+					Timer.cancelTimer(value);
+					KEEP_ALIVE_TIMER := null;
+				};
+				case (null) {
+					// Do nothing
+				};
+			};
+		};
+
+		public func reset_timers() {
+			reset_ack_timer();
+			reset_keep_alive_timer();
+		};
+
+		/// Schedules a timer to send an acknowledgement message to the client.
+		///
+		/// The timer callback is [send_ack_to_clients_timer_callback]. After the callback is executed,
+		/// a timer is scheduled to check if the registered clients have sent a keep alive message.
+		public func schedule_send_ack_to_clients(send_ack_interval_ms : Nat64, keep_alive_timeout_ms : Nat64, handlers : WsHandlers) {
+			let timer_id = Timer.setTimer(
+				#nanoseconds(Nat64.toNat(send_ack_interval_ms) * 1_000_000),
+				func() : async () {
+					send_ack_to_clients_timer_callback();
+
+					schedule_check_keep_alive(send_ack_interval_ms, keep_alive_timeout_ms, handlers);
+				},
+			);
+
+			put_ack_timet_id(timer_id);
+		};
+
+		/// Schedules a timer to check if the registered clients have sent a keep alive message
+		/// after receiving an acknowledgement message.
+		///
+		/// The timer callback is [check_keep_alive_timer_callback]. After the callback is executed,
+		/// a timer is scheduled again to send an acknowledgement message to the registered clients.
+		func schedule_check_keep_alive(send_ack_interval_ms : Nat64, keep_alive_timeout_ms : Nat64, handlers : WsHandlers) {
+			let timer_id = Timer.setTimer(
+				#nanoseconds(Nat64.toNat(keep_alive_timeout_ms) * 1_000_000),
+				func() : async () {
+					await check_keep_alive_timer_callback(keep_alive_timeout_ms, handlers);
+
+					schedule_send_ack_to_clients(send_ack_interval_ms, keep_alive_timeout_ms, handlers);
+				},
+			);
+		};
+
+		/// Sends an acknowledgement message to the client.
+		/// The message contains the current incoming message sequence number for that client,
+		/// so that the client knows that all the messages it sent have been received by the canister.
+		func send_ack_to_clients_timer_callback() {
+			for (client_key in REGISTERED_CLIENTS.keys()) {
+				switch (get_expected_incoming_message_from_client_num(client_key)) {
+					case (#Ok(expected_incoming_sequence_num)) {
+						let ack_message : CanisterAckMessageContent = {
+							last_incoming_sequence_num = expected_incoming_sequence_num - 1;
+						};
+						let message : WebsocketServiceMessageContent = #AckMessage(ack_message);
+						switch (send_service_message_to_client(self, client_key, message)) {
+							case (#Err(err)) {
+								// TODO: decide what to do when sending the message fails
+
+								Logger.custom_print("[ack-to-clients-timer-cb]: Error sending ack message to client" # clientKeyToText(client_key) # ": " # err);
+							};
+							case (#Ok(_)) {
+								// Do nothing
+							};
+						};
+					};
+					case (#Err(err)) {
+						// TODO: decide what to do when getting the expected incoming sequence number fails (shouldn't happen)
+						Logger.custom_print("[ack-to-clients-timer-cb]: Error getting expected incoming sequence number for client" # clientKeyToText(client_key) # ": " # err);
+					};
+				};
+			};
+
+			Logger.custom_print("[ack-to-clients-timer-cb]: Sent ack messages to all clients");
+		};
+
+		/// Checks if the registered clients have sent a keep alive message.
+		/// If a client has not sent a keep alive message, it is removed from the registered clients.
+		func check_keep_alive_timer_callback(keep_alive_timeout_ms : Nat64, handlers : WsHandlers) : async () {
+			for ((client_key, client_metadata) in REGISTERED_CLIENTS.entries()) {
+				let last_keep_alive = client_metadata.last_keep_alive_timestamp;
+
+				if (get_current_time() - last_keep_alive > keep_alive_timeout_ms * 1_000_000) {
+					await remove_client(client_key, handlers);
+
+					Logger.custom_print("[check-keep-alive-timer-cb]: Client " # clientKeyToText(client_key) # " has not sent a keep alive message in the last " # debug_show (keep_alive_timeout_ms) # " ms and has been removed");
+				};
+			};
+
+			Logger.custom_print("[check-keep-alive-timer-cb]: Checked keep alive messages for all clients");
+		};
+
+		public func update_last_keep_alive_timestamp_for_client(client_key : ClientKey) {
+			let client = REGISTERED_CLIENTS.get(client_key);
+			switch (client) {
+				case (?client_metadata) {
+					client_metadata.last_keep_alive_timestamp := get_current_time();
+					REGISTERED_CLIENTS.put(client_key, client_metadata);
+				};
+				case (null) {
+					// Do nothing.
+				};
+			};
+		};
 	};
 
 	/// Internal function used to put the messages in the outgoing messages queue and certify them.
@@ -943,7 +1049,7 @@ module {
 		let websocket_message : WebsocketMessage = {
 			client_key;
 			sequence_num;
-			timestamp = Nat64.fromIntWrap(get_current_time());
+			timestamp = get_current_time();
 			is_service_message;
 			content = msg_bytes;
 		};
@@ -985,24 +1091,57 @@ module {
 	};
 
 	/// Parameters for the IC WebSocket CDK initialization.
-	public class WsInitParams(init_ws_state : IcWebSocketState, init_handlers : WsHandlers) {
-		public var state : IcWebSocketState = init_ws_state;
+	/// Arguments:
+	/// - `init_handlers`: Handlers initialized by the canister and triggered by the CDK.
+	/// - `init_max_number_of_returned_messages`: Maximum number of returned messages. Defaults to `10` if null.
+	/// - `init_send_ack_interval_ms`: Send ack interval in milliseconds. Defaults to `60_000` (60 seconds) if null.
+	/// - `init_keep_alive_timeout_ms`: Keep alive timeout in milliseconds. Defaults to `10_000` (10 seconds) if null.
+	public class WsInitParams(
+		init_handlers : WsHandlers,
+		init_max_number_of_returned_messages : ?Nat,
+		init_send_ack_interval_ms : ?Nat64,
+		init_keep_alive_timeout_ms : ?Nat64,
+	) {
 		/// The callback handlers for the WebSocket.
 		public var handlers : WsHandlers = init_handlers;
+		/// The maximum number of messages to be returned in a polling iteration.
+		/// Defaults to `10`.
+		public var max_number_of_returned_messages : Nat = switch (init_max_number_of_returned_messages) {
+			case (?value) { value };
+			case (null) { DEFAULT_MAX_NUMBER_OF_RETURNED_MESSAGES };
+		};
 		/// The interval at which to send an acknowledgement message to the client,
 		/// so that the client knows that all the messages it sent have been received by the canister (in milliseconds).
 		/// Defaults to `60_000` (60 seconds).
-		public var send_ack_interval_ms : Nat64 = DEFAULT_SEND_ACK_DELAY_MS;
+		public var send_ack_interval_ms : Nat64 = switch (init_send_ack_interval_ms) {
+			case (?value) { value };
+			case (null) { DEFAULT_SEND_ACK_INTERVAL_MS };
+		};
 		/// The delay to wait for the client to send a keep alive after receiving an acknowledgement (in milliseconds).
 		/// Defaults to `10_000` (10 seconds).
-		public var keep_alive_interval_ms : Nat64 = DEFAULT_CLIENT_KEEP_ALIVE_DELAY_MS;
+		public var keep_alive_timeout_ms : Nat64 = switch (init_keep_alive_timeout_ms) {
+			case (?value) { value };
+			case (null) { DEFAULT_CLIENT_KEEP_ALIVE_TIMEOUT_MS };
+		};
+
+		public func get_handlers() : WsHandlers {
+			return handlers;
+		};
 	};
 
-	public class IcWebSocket(params : WsInitParams) {
+	public class IcWebSocket(init_ws_state : IcWebSocketState, params : WsInitParams) {
 		/// The state of the IC WebSocket.
-		private var WS_STATE : IcWebSocketState = params.state;
+		private var WS_STATE : IcWebSocketState = init_ws_state;
 		/// The callback handlers for the WebSocket.
-		private var HANDLERS : WsHandlers = params.handlers;
+		private var HANDLERS : WsHandlers = params.get_handlers();
+
+		do {
+			// reset initial timers
+			WS_STATE.reset_timers();
+
+			// schedule a timer that will send an acknowledgement message to clients
+			WS_STATE.schedule_send_ack_to_clients(params.send_ack_interval_ms, params.keep_alive_timeout_ms, HANDLERS);
+		};
 
 		/// Resets the internal state of the IC WebSocket CDK.
 		///
@@ -1021,7 +1160,7 @@ module {
 		public func ws_open(caller : Principal, args : CanisterWsOpenArguments) : async CanisterWsOpenResult {
 			// anonymous clients cannot open a connection
 			if (Principal.isAnonymous(caller)) {
-				return #Err("anonymous clients cannot open a connection");
+				return #Err("anonymous principal cannot open a connection");
 			};
 
 			// avoid gateway opening a connection for its own principal
@@ -1035,7 +1174,7 @@ module {
 			};
 			// check if client is not registered yet
 			if (WS_STATE.is_client_registered(client_key)) {
-				return #Err("client with key" # clientKeyToText(client_key) # "already has an open connection");
+				return #Err("client with key " # clientKeyToText(client_key) # " already has an open connection");
 			};
 
 			// initialize client maps
@@ -1109,7 +1248,7 @@ module {
 
 			// check if the client key is correct
 			if (not areClientKeysEqual(registered_client_key, client_key)) {
-				return #Err("client with principal" #Principal.toText(caller) # "has a different key than the one used in the message");
+				return #Err("client with principal " #Principal.toText(caller) # " has a different key than the one used in the message");
 			};
 
 			let expected_sequence_num = switch (WS_STATE.get_expected_incoming_message_from_client_num(client_key)) {
@@ -1143,7 +1282,7 @@ module {
 			};
 
 			if (is_service_message) {
-				return await handle_keep_alive_client_message(client_key, content);
+				return await handle_received_service_message(client_key, content);
 			};
 
 			await HANDLERS.call_on_message({
@@ -1162,7 +1301,7 @@ module {
 					#Err(err);
 				};
 				case (_) {
-					WS_STATE.get_cert_messages(caller, args.nonce);
+					WS_STATE.get_cert_messages(caller, args.nonce, params.max_number_of_returned_messages);
 				};
 			};
 		};
@@ -1172,7 +1311,7 @@ module {
 			await ws_send(WS_STATE, client_principal, msg_bytes);
 		};
 
-		func handle_keep_alive_client_message(client_key : ClientKey, content : Blob) : async Result<(), Text> {
+		func handle_received_service_message(client_key : ClientKey, content : Blob) : async Result<(), Text> {
 			let message_content : WebsocketServiceMessageContent = switch (decode_websocket_service_message_content(content)) {
 				case (#Err(err)) {
 					return #Err(err);
@@ -1183,14 +1322,20 @@ module {
 			};
 
 			switch (message_content) {
-				case (#KeepAliveMessage(_keep_alive_message)) {
-					WS_STATE.update_last_keep_alive_timestamp_for_client(client_key);
+				case (#KeepAliveMessage(keep_alive_message)) {
+					handle_keep_alive_client_message(client_key, keep_alive_message);
 					#Ok;
 				};
 				case (_) {
-					return #Err("invalid keep alive message content");
+					return #Err("Invalid received service message");
 				};
 			};
+		};
+
+		func handle_keep_alive_client_message(client_key : ClientKey, _keep_alive_message : ClientKeepAliveMessageContent) {
+			// TODO: delete messages from the queue that have been acknowledged by the client
+
+			WS_STATE.update_last_keep_alive_timestamp_for_client(client_key);
 		};
 	};
 };
