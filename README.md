@@ -28,7 +28,8 @@ mops add base@0.9.1
 mops add ic-certification@0.1.1
 mops add sha2@0.0.2
 mops add cbor@0.1.3
-mops add https://github.com/omnia-network/ic-websocket-cdk-mo#e06af0401237ad9f6b454dd7b9df6645458d3eb5
+mops add candid = "1.0.2"
+mops add https://github.com/omnia-network/ic-websocket-cdk-mo#a229d4a6d95987b4b1d46e9c5e7fde6d896fa118
 ```
 
 The **ic-websocket-cdk** package will be available on **mops** soon.
