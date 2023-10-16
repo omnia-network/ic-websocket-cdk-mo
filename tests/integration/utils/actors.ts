@@ -1,7 +1,6 @@
 import { Actor, ActorConfig, HttpAgent, HttpAgentOptions } from "@dfinity/agent";
 import { identityFromSeed } from "./identity";
-// @ts-ignore
-import { idlFactory } from "../../src/declarations/test_canister/test_canister.did.js";
+import { idlFactory } from "../../src/declarations/test_canister";
 import type { _SERVICE } from "../../src/declarations/test_canister/test_canister.did";
 
 export const localReplicaHost = "http://127.0.0.1:4943";
@@ -42,7 +41,7 @@ export const createActor = (canisterId: string, options: { agentOptions?: HttpAg
 };
 
 // Principal: "i3gux-m3hwt-5mh2w-t7wwm-fwx5j-6z6ht-hxguo-t4rfw-qp24z-g5ivt-2qe"
-// this is the gateway registered in the local replica when deploying the canister with `npm run deploy:tests`
+// this is the gateway registered in the local replica when deploying the canister with npm run deploy:tests
 const gateway1Seed = "harsh shy amazing enroll reject shy smooth abandon fat start mixture capable";
 export const gateway1Data = {
   identity: identityFromSeed(gateway1Seed),
@@ -85,3 +84,5 @@ export const client2 = createActor(canisterId, {
     identity: client2Data.identity,
   },
 });
+
+export const anonymousClient = createActor(canisterId);
