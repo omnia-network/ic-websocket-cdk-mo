@@ -1,3 +1,5 @@
+/// IC WebSocket CDK Motoko Library
+
 import Array "mo:base/Array";
 import Blob "mo:base/Blob";
 import CertifiedData "mo:base/CertifiedData";
