@@ -1,9 +1,8 @@
 # ic-websocket-cdk-mo
 
+[![mops](https://oknww-riaaa-aaaam-qaf6a-cai.raw.ic0.app/badge/mops/ic-websocket-cdk)](https://mops.one/ic-websocket-cdk)
 
 This repository contains the Motoko implementation of IC WebSocket CDK. For more information about IC WebSockets, see [IC WebSocket Gateway](https://github.com/omnia-network/ic-websocket-gateway).
-
-> ⚠️ This library is still in development and is not ready for production use. Expect breaking changes.
 
 ## Installation
 
@@ -15,7 +14,7 @@ mops add ic-websocket-cdk
 
 ## Usage
 
-TODO: Add usage instructions
+Refer to the [ic-websockets-pingpong-mo](https://github.com/iamenochchirima/ic-websockets-pingpong-mo) repository for an example of how to use this library.
 
 ### Candid interface
 In order for the frontend clients and the Gateway to work properly, the canister must expose some specific methods in its Candid interface, between the custom methods that you've implemented for your logic. A valid Candid interface for the canister is the following:
