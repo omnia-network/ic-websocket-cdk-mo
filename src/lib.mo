@@ -42,6 +42,14 @@ module {
 	/// The default timeout to wait for the client to send a keep alive after receiving an acknowledgement.
 	let DEFAULT_CLIENT_KEEP_ALIVE_TIMEOUT_MS : Nat64 = 10_000; // 10 seconds
 
+	/// The initial nonce for outgoing messages.
+	let INITIAL_OUTGOING_MESSAGE_NONCE : Nat64 = 0;
+	/// The initial sequence number to expect from messages coming from clients.
+	/// The first message coming from the client will have sequence number `1` because on the client the sequence number is incremented before sending the message.
+	let INITIAL_CLIENT_SEQUENCE_NUM : Nat64 = 1;
+	/// The initial sequence number for outgoing messages.
+	let INITIAL_CANISTER_SEQUENCE_NUM : Nat64 = 0;
+
 	//// TYPES ////
 	type CandidType = Type.Type;
 	type CandidValue = Value.Value;
@@ -602,7 +610,7 @@ module {
 		/// Keeps track of the nonce which:
 		/// - the WS Gateway uses to specify the first index of the certified messages to be returned when polling
 		/// - the client uses as part of the path in the Merkle tree in order to verify the certificate of the messages relayed by the WS Gateway
-		public var OUTGOING_MESSAGE_NONCE : Nat64 = 0;
+		public var OUTGOING_MESSAGE_NONCE : Nat64 = INITIAL_OUTGOING_MESSAGE_NONCE;
 		/// The acknowledgement active timer.
 		public var ACK_TIMER : ?Timer.TimerId = null;
 		// /// The keep alive active timer.
@@ -622,7 +630,7 @@ module {
 			CERT_TREE_STORE := CertTree.newStore();
 			CERT_TREE := CertTree.Ops(CERT_TREE_STORE);
 			MESSAGES_FOR_GATEWAY := List.nil<CanisterOutputMessage>();
-			OUTGOING_MESSAGE_NONCE := 0;
+			OUTGOING_MESSAGE_NONCE := INITIAL_OUTGOING_MESSAGE_NONCE;
 		};
 
 		public func get_outgoing_message_nonce() : Nat64 {
@@ -662,7 +670,7 @@ module {
 		};
 
 		func init_outgoing_message_to_client_num(client_key : ClientKey) {
-			OUTGOING_MESSAGE_TO_CLIENT_NUM_MAP.put(client_key, 0);
+			OUTGOING_MESSAGE_TO_CLIENT_NUM_MAP.put(client_key, INITIAL_CANISTER_SEQUENCE_NUM);
 		};
 
 		public func get_outgoing_message_to_client_num(client_key : ClientKey) : Result<Nat64, Text> {
@@ -684,7 +692,7 @@ module {
 		};
 
 		func init_expected_incoming_message_from_client_num(client_key : ClientKey) {
-			INCOMING_MESSAGE_FROM_CLIENT_NUM_MAP.put(client_key, 1);
+			INCOMING_MESSAGE_FROM_CLIENT_NUM_MAP.put(client_key, INITIAL_CLIENT_SEQUENCE_NUM);
 		};
 
 		public func get_expected_incoming_message_from_client_num(client_key : ClientKey) : Result<Nat64, Text> {
