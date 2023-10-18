@@ -3,6 +3,7 @@
 import Array "mo:base/Array";
 import Blob "mo:base/Blob";
 import CertifiedData "mo:base/CertifiedData";
+import Debug "mo:base/Debug";
 import Deque "mo:base/Deque";
 import HashMap "mo:base/HashMap";
 import Hash "mo:base/Hash";
@@ -17,6 +18,7 @@ import Time "mo:base/Time";
 import Timer "mo:base/Timer";
 import Bool "mo:base/Bool";
 import Error "mo:base/Error";
+import TrieSet "mo:base/TrieSet";
 import CborValue "mo:cbor/Value";
 import CborDecoder "mo:cbor/Decoder";
 import CborEncoder "mo:cbor/Encoder";
@@ -596,6 +598,8 @@ module {
 		public var REGISTERED_CLIENTS = HashMap.HashMap<ClientKey, RegisteredClient>(0, areClientKeysEqual, hashClientKey);
 		/// Maps the client's principal to the current client key
 		public var CURRENT_CLIENT_KEY_MAP = HashMap.HashMap<ClientPrincipal, ClientKey>(0, Principal.equal, Principal.hash);
+		/// Keeps track of all the clients for which we're waiting for a keep alive message.
+		public var CLIENTS_WAITING_FOR_KEEP_ALIVE : TrieSet.Set<ClientKey> = TrieSet.empty();
 		/// Maps the client's public key to the sequence number to use for the next outgoing message (to that client).
 		public var OUTGOING_MESSAGE_TO_CLIENT_NUM_MAP = HashMap.HashMap<ClientKey, Nat64>(0, areClientKeysEqual, hashClientKey);
 		/// Maps the client's public key to the expected sequence number of the next incoming message (from that client).
@@ -624,7 +628,9 @@ module {
 				await remove_client(client_key, handlers);
 			};
 
+			// make sure all the maps are cleared
 			CURRENT_CLIENT_KEY_MAP := HashMap.HashMap<ClientPrincipal, ClientKey>(0, Principal.equal, Principal.hash);
+			CLIENTS_WAITING_FOR_KEEP_ALIVE := TrieSet.empty<ClientKey>();
 			OUTGOING_MESSAGE_TO_CLIENT_NUM_MAP := HashMap.HashMap<ClientKey, Nat64>(0, areClientKeysEqual, hashClientKey);
 			INCOMING_MESSAGE_FROM_CLIENT_NUM_MAP := HashMap.HashMap<ClientKey, Nat64>(0, areClientKeysEqual, hashClientKey);
 			CERT_TREE_STORE := CertTree.newStore();
@@ -663,6 +669,10 @@ module {
 			};
 
 			#Ok;
+		};
+
+		public func add_client_to_wait_for_keep_alive(client_key : ClientKey) {
+			CLIENTS_WAITING_FOR_KEEP_ALIVE := TrieSet.put<ClientKey>(CLIENTS_WAITING_FOR_KEEP_ALIVE, client_key, hashClientKey(client_key), areClientKeysEqual);
 		};
 
 		public func get_registered_gateway_principal() : Principal {
@@ -723,6 +733,7 @@ module {
 		};
 
 		public func remove_client(client_key : ClientKey, handlers : WsHandlers) : async () {
+			CLIENTS_WAITING_FOR_KEEP_ALIVE := TrieSet.delete(CLIENTS_WAITING_FOR_KEEP_ALIVE, client_key, hashClientKey(client_key), areClientKeysEqual);
 			CURRENT_CLIENT_KEY_MAP.delete(client_key.client_principal);
 			REGISTERED_CLIENTS.delete(client_key);
 			OUTGOING_MESSAGE_TO_CLIENT_NUM_MAP.delete(client_key);
@@ -910,37 +921,36 @@ module {
 			reset_keep_alive_timer();
 		};
 
-		/// Schedules a timer to send an acknowledgement message to the client.
+		/// Start an interval to send an acknowledgement messages to the clients.
 		///
-		/// The timer callback is [send_ack_to_clients_timer_callback]. After the callback is executed,
+		/// The interval callback is [send_ack_to_clients_timer_callback]. After the callback is executed,
 		/// a timer is scheduled to check if the registered clients have sent a keep alive message.
 		public func schedule_send_ack_to_clients(send_ack_interval_ms : Nat64, keep_alive_timeout_ms : Nat64, handlers : WsHandlers) {
-			let timer_id = Timer.setTimer(
+			let timer_id = Timer.recurringTimer(
 				#nanoseconds(Nat64.toNat(send_ack_interval_ms) * 1_000_000),
 				func() : async () {
 					send_ack_to_clients_timer_callback();
 
-					schedule_check_keep_alive(send_ack_interval_ms, keep_alive_timeout_ms, handlers);
+					schedule_check_keep_alive(keep_alive_timeout_ms, handlers);
 				},
 			);
 
 			put_ack_timet_id(timer_id);
 		};
 
-		/// Schedules a timer to check if the registered clients have sent a keep alive message
+		/// Schedules a timer to check if the clients (only those to which an ack message was sent) have sent a keep alive message
 		/// after receiving an acknowledgement message.
 		///
-		/// The timer callback is [check_keep_alive_timer_callback]. After the callback is executed,
-		/// a timer is scheduled again to send an acknowledgement message to the registered clients.
-		func schedule_check_keep_alive(send_ack_interval_ms : Nat64, keep_alive_timeout_ms : Nat64, handlers : WsHandlers) {
+		/// The timer callback is [check_keep_alive_timer_callback].
+		func schedule_check_keep_alive(keep_alive_timeout_ms : Nat64, handlers : WsHandlers) {
 			let timer_id = Timer.setTimer(
 				#nanoseconds(Nat64.toNat(keep_alive_timeout_ms) * 1_000_000),
 				func() : async () {
 					await check_keep_alive_timer_callback(keep_alive_timeout_ms, handlers);
-
-					schedule_send_ack_to_clients(send_ack_interval_ms, keep_alive_timeout_ms, handlers);
 				},
 			);
+
+			put_keep_alive_timer_id(timer_id);
 		};
 
 		/// Sends an acknowledgement message to the client.
@@ -951,6 +961,7 @@ module {
 				switch (get_expected_incoming_message_from_client_num(client_key)) {
 					case (#Ok(expected_incoming_sequence_num)) {
 						let ack_message : CanisterAckMessageContent = {
+							// the expected sequence number is 1 more because it's incremented when a message is received
 							last_incoming_sequence_num = expected_incoming_sequence_num - 1;
 						};
 						let message : WebsocketServiceMessageContent = #AckMessage(ack_message);
@@ -961,7 +972,7 @@ module {
 								Logger.custom_print("[ack-to-clients-timer-cb]: Error sending ack message to client" # clientKeyToText(client_key) # ": " # err);
 							};
 							case (#Ok(_)) {
-								// Do nothing
+								add_client_to_wait_for_keep_alive(client_key);
 							};
 						};
 					};
@@ -975,16 +986,24 @@ module {
 			Logger.custom_print("[ack-to-clients-timer-cb]: Sent ack messages to all clients");
 		};
 
-		/// Checks if the registered clients have sent a keep alive message.
-		/// If a client has not sent a keep alive message, it is removed from the registered clients.
+		/// Checks if the clients for which we are waiting for keep alive have sent a keep alive message.
+		/// If a client has not sent a keep alive message, it is removed from the connected clients.
 		func check_keep_alive_timer_callback(keep_alive_timeout_ms : Nat64, handlers : WsHandlers) : async () {
-			for ((client_key, client_metadata) in REGISTERED_CLIENTS.entries()) {
-				let last_keep_alive = client_metadata.last_keep_alive_timestamp;
+			for (client_key in Array.vals(TrieSet.toArray(CLIENTS_WAITING_FOR_KEEP_ALIVE))) {
+				let client_metadata = REGISTERED_CLIENTS.get(client_key);
+				switch (client_metadata) {
+					case (?client_metadata) {
+						let last_keep_alive = client_metadata.last_keep_alive_timestamp;
 
-				if (get_current_time() - last_keep_alive > keep_alive_timeout_ms * 1_000_000) {
-					await remove_client(client_key, handlers);
+						if (get_current_time() - last_keep_alive > keep_alive_timeout_ms * 1_000_000) {
+							await remove_client(client_key, handlers);
 
-					Logger.custom_print("[check-keep-alive-timer-cb]: Client " # clientKeyToText(client_key) # " has not sent a keep alive message in the last " # debug_show (keep_alive_timeout_ms) # " ms and has been removed");
+							Logger.custom_print("[check-keep-alive-timer-cb]: Client " # clientKeyToText(client_key) # " has not sent a keep alive message in the last " # debug_show (keep_alive_timeout_ms) # " ms and has been removed");
+						};
+					};
+					case (null) {
+						// Do nothing
+					};
 				};
 			};
 
@@ -1122,12 +1141,18 @@ module {
 		};
 		/// The interval at which to send an acknowledgement message to the client,
 		/// so that the client knows that all the messages it sent have been received by the canister (in milliseconds).
+		///
+		/// Must be greater than `keep_alive_timeout_ms`.
+		///
 		/// Defaults to `60_000` (60 seconds).
 		public var send_ack_interval_ms : Nat64 = switch (init_send_ack_interval_ms) {
 			case (?value) { value };
 			case (null) { DEFAULT_SEND_ACK_INTERVAL_MS };
 		};
 		/// The delay to wait for the client to send a keep alive after receiving an acknowledgement (in milliseconds).
+		///
+		/// Must be lower than `send_ack_interval_ms`.
+		///
 		/// Defaults to `10_000` (10 seconds).
 		public var keep_alive_timeout_ms : Nat64 = switch (init_keep_alive_timeout_ms) {
 			case (?value) { value };
@@ -1137,8 +1162,23 @@ module {
 		public func get_handlers() : WsHandlers {
 			return handlers;
 		};
+
+		/// Checks the validity of the timer parameters.
+		/// `send_ack_interval_ms` must be greater than `keep_alive_timeout_ms`.
+		///
+		/// # Traps
+		/// If `send_ack_interval_ms` < `keep_alive_timeout_ms`.
+		public func check_validity() {
+			if (keep_alive_timeout_ms > send_ack_interval_ms) {
+				Debug.trap("send_ack_interval_ms must be greater than keep_alive_timeout_ms");
+			};
+		};
 	};
 
+	/// The IC WebSocket instance.
+	///
+	/// # Traps
+	/// If the parameters are invalid. See [`WsInitParams::check_validity`] for more details.
 	public class IcWebSocket(init_ws_state : IcWebSocketState, params : WsInitParams) {
 		/// The state of the IC WebSocket.
 		private var WS_STATE : IcWebSocketState = init_ws_state;
@@ -1146,6 +1186,9 @@ module {
 		private var HANDLERS : WsHandlers = params.get_handlers();
 
 		do {
+			// check if the parameters are valid
+			params.check_validity();
+
 			// reset initial timers
 			WS_STATE.reset_timers();
 
