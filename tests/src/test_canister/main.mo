@@ -9,6 +9,10 @@ actor class TestCanister(
   init_keep_alive_timeout_ms : Nat64,
 ) {
 
+  type AppMessage = {
+    text : Text;
+  };
+
   var ws_state = IcWebSocketCdk.IcWebSocketState(init_gateway_principal);
 
   func on_open(args : IcWebSocketCdk.OnOpenCallbackArgs) : async () {
@@ -49,8 +53,8 @@ actor class TestCanister(
   };
 
   // method called by the WS Gateway to send a message of type GatewayMessage to the canister
-  public shared ({ caller }) func ws_message(args : IcWebSocketCdk.CanisterWsMessageArguments) : async IcWebSocketCdk.CanisterWsMessageResult {
-    await ws.ws_message(caller, args);
+  public shared ({ caller }) func ws_message(args : IcWebSocketCdk.CanisterWsMessageArguments, msg_type : ?AppMessage) : async IcWebSocketCdk.CanisterWsMessageResult {
+    await ws.ws_message(caller, args, msg_type);
   };
 
   // method called by the WS Gateway to get messages for all the clients it serves

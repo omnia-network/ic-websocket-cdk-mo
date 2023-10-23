@@ -512,8 +512,42 @@ module {
 	public type OnOpenCallback = (OnOpenCallbackArgs) -> async ();
 
 	/// Arguments passed to the `on_message` handler.
+	/// The `message` argument is the message received from the client, serialized in Candid.
+	/// To deserialize the message, use [from_candid].
+	///
+	/// # Example
+	/// This example is the deserialize equivalent of the [ws_send]'s example serialize one.
+	/// ```motoko
+	/// import IcWebSocketCdk "mo:ic-websocket-cdk";
+	///
+	/// actor MyCanister {
+	///   // ...
+	///
+	///   type MyMessage = {
+	///     some_field: Text;
+	///   };
+	///
+	///   // initialize the CDK
+	///
+	///   func on_message(args : IcWebSocketCdk.OnMessageCallbackArgs) : async () {
+	///     let received_message: ?MyMessage = from_candid(args.message);
+	///     switch (received_message) {
+	///       case (?received_message) {
+	///         Debug.print("Received message: some_field: " # received_message.some_field);
+	///       };
+	///       case (invalid_arg) {
+	///         return #Err("invalid argument: " # debug_show (invalid_arg));
+	///       };
+	///     };
+	///   };
+	///
+	///   // ...
+	/// }
+	/// ```
 	public type OnMessageCallbackArgs = {
+		/// The principal of the client sending the message to the canister.
 		client_principal : ClientPrincipal;
+		/// The message received from the client, serialized in Candid. See [OnMessageCallbackArgs] for an example on how to deserialize the message.
 		message : Blob;
 	};
 	/// Handler initialized by the canister and triggered by the CDK once a message is received by
@@ -1104,12 +1138,34 @@ module {
 		#Ok;
 	};
 
-	/// Sends a message to the client.
+	/// Sends a message to the client. The message must already be serialized **using Candid**.
+	/// Use [to_candid] to serialize the message.
 	///
-	/// Under the hood, the message is certified, and then it is added to the queue of messages
+	/// Under the hood, the message is certified and added to the queue of messages
 	/// that the WS Gateway will poll in the next iteration.
-	/// **Note**: you have to serialize the message to a `Blob` before calling this method.
-	/// Use the `to_candid` function.
+	///
+	/// # Example
+	/// This example is the serialize equivalent of the [OnMessageCallbackArgs]'s example deserialize one.
+	/// ```motoko
+	/// import IcWebSocketCdk "mo:ic-websocket-cdk";
+	///
+	/// actor MyCanister {
+	///   // ...
+	///
+	///   type MyMessage = {
+	///     some_field: Text;
+	///   };
+	///
+	///   // initialize the CDK
+	///
+	///   // at some point in your code
+	///   let msg : MyMessage = {
+	///     some_field: "Hello, World!";
+	///   };
+	///
+	///   IcWebSocketCdk.ws_send(ws_state, client_principal, to_candid(msg));
+	/// }
+	/// ```
 	public func ws_send(ws_state : IcWebSocketState, client_principal : ClientPrincipal, msg_bytes : Blob) : async CanisterWsSendResult {
 		_ws_send(ws_state, client_principal, msg_bytes, false);
 	};
@@ -1280,7 +1336,31 @@ module {
 		};
 
 		/// Handles the WS messages received either directly from the client or relayed by the WS Gateway.
-		public func ws_message(caller : Principal, args : CanisterWsMessageArguments) : async CanisterWsMessageResult {
+		///
+		/// The second argument is only needed to expose the type of the message on the canister Candid interface and get automatic types generation on the client side.
+		/// This way, on the client you have the same types and you don't have to care about serializing and deserializing the messages sent through IC WebSocket.
+		///
+		/// # Example
+		/// ```motoko
+		/// import IcWebSocketCdk "mo:ic-websocket-cdk";
+		///
+		/// actor MyCanister {
+		///   // ...
+		///
+		///   type MyMessage = {
+		///     some_field: Text;
+		///   };
+		///
+		///   // declare also the other methods: ws_open, ws_close, ws_get_messages
+		///
+		///   public shared ({ caller }) func ws_message(args : IcWebSocketCdk.CanisterWsMessageArguments, msg_type : ?MyMessage) : async IcWebSocketCdk.CanisterWsMessageResult {
+		///     await ws.ws_message(caller, args, msg_type);
+		///   };
+		///
+		///   // ...
+		/// }
+		/// ```
+		public func ws_message(caller : Principal, args : CanisterWsMessageArguments, _msg_type : Any) : async CanisterWsMessageResult {
 			// check if client registered its principal by calling ws_open
 			let registered_client_key = switch (WS_STATE.get_client_key_from_principal(caller)) {
 				case (#Err(err)) {
@@ -1359,7 +1439,7 @@ module {
 			};
 		};
 
-		/// Sends a message to the client. See [ws_send] function for reference.
+		/// Sends a message to the client. See [IcWebSocketCdk.ws_send] function for reference.
 		public func send(client_principal : ClientPrincipal, msg_bytes : Blob) : async CanisterWsSendResult {
 			await ws_send(WS_STATE, client_principal, msg_bytes);
 		};
