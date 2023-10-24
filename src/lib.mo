@@ -1360,7 +1360,7 @@ module {
 		///   // ...
 		/// }
 		/// ```
-		public func ws_message(caller : Principal, args : CanisterWsMessageArguments, _msg_type : Any) : async CanisterWsMessageResult {
+		public func ws_message(caller : Principal, args : CanisterWsMessageArguments, _msg_type : ?Any) : async CanisterWsMessageResult {
 			// check if client registered its principal by calling ws_open
 			let registered_client_key = switch (WS_STATE.get_client_key_from_principal(caller)) {
 				case (#Err(err)) {
