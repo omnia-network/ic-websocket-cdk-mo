@@ -34,7 +34,7 @@ jobs:
       - run: |
           dfx identity use action
           mops import-identity --no-encrypt -- "$(dfx identity export action)"
-          mops publish --no-docs
+          mops publish
           echo "version=$(cat mops.toml | grep "version =" | cut -d\" -f2)" >> "$GITHUB_OUTPUT"
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
