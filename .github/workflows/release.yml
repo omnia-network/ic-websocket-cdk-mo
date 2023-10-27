@@ -30,7 +30,10 @@ jobs:
           DFX_IDENTITY_PEM: ${{ secrets.DFX_IDENTITY_PEM }}
 
       - name: install mops
-        run: npm i ic-mops mocv -g
+        run: npm i ic-mops -g
+
+      - name: install moc
+        run: npx mocv use latest
 
       - name: publish on mops
         run: |
