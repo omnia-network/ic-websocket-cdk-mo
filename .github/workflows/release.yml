@@ -8,12 +8,13 @@ on:
       - completed
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     # only run if the tests were successful
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     outputs:
       version: ${{ steps.npm-publish.outputs.version }}
     steps:
@@ -29,9 +30,10 @@ jobs:
           DFX_IDENTITY_PEM: ${{ secrets.DFX_IDENTITY_PEM }}
 
       - name: install mops
-        run: npm i ic-mops -g
+        run: npm i ic-mops mocv -g
 
-      - run: |
+      - name: publish on mops
+        run: |
           dfx identity use action
           mops import-identity --no-encrypt -- "$(dfx identity export action)"
           mops publish
