@@ -46,13 +46,22 @@ The **ic-websocket-cdk** library implementation can be found in the [src](./src/
 
 ### Testing
 
-There are integration tests available: for these tests a local IC replica is set up and the CDK is deployed to a [test canister](./tests/src/test_canister/main.mo). Tests are written in Node.js and are available in the [tests](./tests/integration/) folder.
+You need Rust toolchain to run the tests.
 
-There's a script that runs the integration tests, taking care of installing the Node.js dependencies, setting up the replica and deploying the canister. To run the script, execute the following command:
+Clone the repo with submodules:
+```bash
+git clone --recurse-submodules https://github.com/omnia-network/ic-websocket-cdk-mo.git
+```
+
+Integration tests are imported from the [IC WebSocket Rust CDK](https://github.com/omnia-network/ic-websocket-cdk-rs.git) in the [tests/ic-websocket-cdk](./tests/ic-websocket-cdk-rs/) submodule.
+
+There's a script that runs the integration tests, taking care of installing dependencies and setting up the local environment. To run the script, execute the following command:
 
 ```bash
 ./scripts/test_canister.sh
 ```
+
+> If you're on **macOS**, you have to manually download the PocketIC binary ([guide](https://github.com/dfinity/pocketic#download)) and place it in the [bin](./bin/) folder.
 
 ## License
 

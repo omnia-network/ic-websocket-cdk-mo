@@ -1,0 +1,3 @@
+[submodule "tests/ic-websocket-cdk-rs"]
+	path = tests/ic-websocket-cdk-rs
+	url = https://github.com/omnia-network/ic-websocket-cdk-rs.git

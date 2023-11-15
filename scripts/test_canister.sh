@@ -2,25 +2,13 @@
 
 set -e
 
-cd tests
+./scripts/download-pocket-ic.sh
 
-# install Motoko dependencies
-mops install
+./scripts/build-test-canister.sh
 
-# install Node.js dependencies
-npm install
+export POCKET_IC_BIN="$(pwd)/bin/pocket-ic"
+export TEST_CANISTER_WASM_PATH="$(pwd)/bin/test_canister.wasm"
 
-# prepare environment for integration tests
-dfx start --clean --background
+cd tests/ic-websocket-cdk-rs
 
-npm run deploy:tests
-
-npm run generate
-
-# get the canister id of the test canister and save it to .env
-echo "CANISTER_ID_TEST_CANISTER='$(npx json -f .dfx/local/canister_ids.json test_canister.local)'" > .env
-
-# run integration tests
-npm run test:integration
-
-dfx stop
+RUST_BACKTRACE=1 cargo test --package ic-websocket-cdk --lib -- tests::integration_tests --test-threads 1
