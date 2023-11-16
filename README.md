@@ -53,7 +53,7 @@ Clone the repo with submodules:
 git clone --recurse-submodules https://github.com/omnia-network/ic-websocket-cdk-mo.git
 ```
 
-Integration tests are imported from the [IC WebSocket Rust CDK](https://github.com/omnia-network/ic-websocket-cdk-rs.git) in the [tests/ic-websocket-cdk](./tests/ic-websocket-cdk-rs/) submodule.
+Integration tests are imported from the [IC WebSocket Rust CDK](https://github.com/omnia-network/ic-websocket-cdk-rs.git), linked to this repo from the `ic-websocket-cdk-rs` submodule in the [tests](./tests/) folder.
 
 There's a script that runs the integration tests, taking care of installing dependencies and setting up the local environment. To run the script, execute the following command:
 
