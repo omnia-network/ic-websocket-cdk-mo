@@ -30,16 +30,10 @@ jobs:
         with:
           cache-on-failure: "true"
 
-      - name: install mops
+      - name: Install mops
         run: npm i ic-mops -g
 
       # the following steps are replicated in the scripts/test_canister.sh file
-      - name: Install dependencies for integration tests
-        run: |
-          cd tests
-          mops install
-          npm install
-
       - name: Prepare environment for integration tests
         run: |
           ./scripts/download-pocket-ic.sh
