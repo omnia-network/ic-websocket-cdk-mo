@@ -58,7 +58,7 @@ Integration tests are imported from the [IC WebSocket Rust CDK](https://github.c
 There's a script that runs the integration tests, taking care of installing dependencies and setting up the local environment. To run the script, execute the following command:
 
 ```bash
-./scripts/test_canister.sh
+./scripts/test.sh
 ```
 
 > If you're on **macOS**, you have to manually download the PocketIC binary ([guide](https://github.com/dfinity/pocketic#download)) and place it in the [bin](./bin/) folder.

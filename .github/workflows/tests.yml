@@ -33,7 +33,7 @@ jobs:
       - name: Install mops
         run: npm i ic-mops -g
 
-      # the following steps are replicated in the scripts/test_canister.sh file
+      # the following steps are replicated in the scripts/test.sh file
       - name: Prepare environment for integration tests
         run: |
           ./scripts/download-pocket-ic.sh
