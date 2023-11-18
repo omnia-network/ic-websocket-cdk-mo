@@ -328,10 +328,10 @@ module {
 
 	/// Arguments passed to the `on_message` handler.
 	/// The `message` argument is the message received from the client, serialized in Candid.
-	/// To deserialize the message, use [from_candid].
+	/// Use [`from_candid`] to deserialize the message.
 	///
 	/// # Example
-	/// This example is the deserialize equivalent of the [ws_send]'s example serialize one.
+	/// This example is the deserialize equivalent of the [`ws_send`]'s serialize one.
 	/// ```motoko
 	/// import IcWebSocketCdk "mo:ic-websocket-cdk";
 	///
@@ -440,6 +440,10 @@ module {
 
 	/// IC WebSocket class that holds the internal state of the IC WebSocket.
 	///
+	/// Arguments:
+	///
+	/// - `gateway_principals`: An array of the principals of the WS Gateways that are allowed to poll the canister.
+	///
 	/// **Note**: you should only pass an instance of this class to the IcWebSocket class constructor, without using the methods or accessing the fields directly.
 	public class IcWebSocketState(gateway_principals : [Text]) = self {
 		//// STATE ////
@@ -469,7 +473,7 @@ module {
 		};
 		/// The acknowledgement active timer.
 		var ACK_TIMER : ?Timer.TimerId = null;
-		// /// The keep alive active timer.
+		/// The keep alive active timer.
 		var KEEP_ALIVE_TIMER : ?Timer.TimerId = null;
 
 		//// FUNCTIONS ////
@@ -1029,13 +1033,13 @@ module {
 	};
 
 	/// Sends a message to the client. The message must already be serialized **using Candid**.
-	/// Use [to_candid] to serialize the message.
+	/// Use [`to_candid`] to serialize the message.
 	///
 	/// Under the hood, the message is certified and added to the queue of messages
 	/// that the WS Gateway will poll in the next iteration.
 	///
 	/// # Example
-	/// This example is the serialize equivalent of the [OnMessageCallbackArgs]'s example deserialize one.
+	/// This example is the serialize equivalent of the [`OnMessageCallbackArgs`]'s deserialize one.
 	/// ```motoko
 	/// import IcWebSocketCdk "mo:ic-websocket-cdk";
 	///
@@ -1066,7 +1070,9 @@ module {
 	};
 
 	/// Parameters for the IC WebSocket CDK initialization.
+	///
 	/// Arguments:
+	///
 	/// - `init_handlers`: Handlers initialized by the canister and triggered by the CDK.
 	/// - `init_max_number_of_returned_messages`: Maximum number of returned messages. Defaults to `10` if null.
 	/// - `init_send_ack_interval_ms`: Send ack interval in milliseconds. Defaults to `60_000` (60 seconds) if null.
