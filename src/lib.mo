@@ -458,7 +458,7 @@ module {
 		var CERT_TREE = CertTree.Ops(CERT_TREE_STORE);
 		/// Keeps track of the principal of the WS Gateway which polls the canister
 		var REGISTERED_GATEWAYS = do {
-			var map = HashMap.HashMap<GatewayPrincipal, RegisteredGateway>(0, Principal.equal, Principal.hash);
+			let map = HashMap.HashMap<GatewayPrincipal, RegisteredGateway>(0, Principal.equal, Principal.hash);
 
 			for (gateway_principal_text in Iter.fromArray(gateway_principals)) {
 				let gateway_principal = Principal.fromText(gateway_principal_text);
