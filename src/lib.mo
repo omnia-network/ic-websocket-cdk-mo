@@ -19,17 +19,12 @@ import Timer "mo:base/Timer";
 import Bool "mo:base/Bool";
 import Error "mo:base/Error";
 import TrieSet "mo:base/TrieSet";
+import Result "mo:base/Result";
 import CborValue "mo:cbor/Value";
 import CborDecoder "mo:cbor/Decoder";
 import CborEncoder "mo:cbor/Encoder";
 import CertTree "mo:ic-certification/CertTree";
 import Sha256 "mo:sha2/Sha256";
-import Arg "mo:candid/Arg";
-import Decoder "mo:candid/Decoder";
-import Encoder "mo:candid/Encoder";
-import Tag "mo:candid/Tag";
-import Type "mo:candid/Type";
-import Value "mo:candid/Value";
 
 import Logger "Logger";
 
@@ -53,9 +48,6 @@ module {
 	let INITIAL_CANISTER_SEQUENCE_NUM : Nat64 = 0;
 
 	//// TYPES ////
-	type CandidType = Type.Type;
-	type CandidValue = Value.Value;
-	type CandidTag = Tag.Tag;
 	/// Just to be compatible with the Rust version.
 	type Result<Ok, Err> = { #Ok : Ok; #Err : Err };
 
@@ -75,16 +67,6 @@ module {
 	func hashClientKey(k : ClientKey) : Hash.Hash {
 		Text.hash(clientKeyToText(k));
 	};
-	let ClientKeyIdl : CandidType = #record([
-		{
-			tag = #name("client_principal");
-			type_ = #principal;
-		},
-		{
-			tag = #name("client_nonce");
-			type_ = #nat64;
-		},
-	]);
 
 	/// The result of [ws_open].
 	public type CanisterWsOpenResult = Result<(), Text>;
@@ -100,6 +82,7 @@ module {
 	/// The arguments for [ws_open].
 	public type CanisterWsOpenArguments = {
 		client_nonce : Nat64;
+		gateway_principal : GatewayPrincipal;
 	};
 
 	/// The arguments for [ws_close].
@@ -266,240 +249,72 @@ module {
 		tree : Blob; // cert+tree constitute the certificate for all returned messages.
 	};
 
+	type GatewayPrincipal = Principal;
+
 	/// Contains data about the registered WS Gateway.
 	class RegisteredGateway(gw_principal : Principal) {
 		/// The principal of the gateway.
 		public var gateway_principal : Principal = gw_principal;
+		/// The queue of the messages that the gateway can poll.
+		public var messages_queue : List.List<CanisterOutputMessage> = List.nil();
+		/// Keeps track of the nonce which:
+		/// - the WS Gateway uses to specify the first index of the certified messages to be returned when polling
+		/// - the client uses as part of the path in the Merkle tree in order to verify the certificate of the messages relayed by the WS Gateway
+		public var outgoing_message_nonce : Nat64 = INITIAL_OUTGOING_MESSAGE_NONCE;
+
+		/// Resets the messages and nonce to the initial values.
+		public func reset() {
+			messages_queue := List.nil();
+			outgoing_message_nonce := INITIAL_OUTGOING_MESSAGE_NONCE;
+		};
+
+		/// Increments the outgoing message nonce by 1.
+		public func increment_nonce() {
+			outgoing_message_nonce += 1;
+		};
 	};
 
 	/// The metadata about a registered client.
-	class RegisteredClient() {
+	class RegisteredClient(gw_principal : GatewayPrincipal) {
 		public var last_keep_alive_timestamp : Nat64 = get_current_time();
+		public let gateway_principal : GatewayPrincipal = gw_principal;
+
+		/// Gets the last keep alive timestamp.
+		public func get_last_keep_alive_timestamp() : Nat64 {
+			last_keep_alive_timestamp;
+		};
+
+		/// Set the last keep alive timestamp to the current time.
+		public func update_last_keep_alive_timestamp() {
+			last_keep_alive_timestamp := get_current_time();
+		};
 	};
 
 	type CanisterOpenMessageContent = {
 		client_key : ClientKey;
 	};
-	let CanisterOpenMessageContentIdl : CandidType = #record([{
-		tag = #name("client_key");
-		type_ = ClientKeyIdl;
-	}]);
 
 	type CanisterAckMessageContent = {
 		last_incoming_sequence_num : Nat64;
 	};
-	let CanisterAckMessageContentIdl : CandidType = #record([{
-		tag = #name("last_incoming_sequence_num");
-		type_ = #nat64;
-	}]);
 
 	type ClientKeepAliveMessageContent = {
 		last_incoming_sequence_num : Nat64;
 	};
-	let ClientKeepAliveMessageContentIdl : CandidType = #record([{
-		tag = #name("last_incoming_sequence_num");
-		type_ = #nat64;
-	}]);
 
 	type WebsocketServiceMessageContent = {
 		#OpenMessage : CanisterOpenMessageContent;
 		#AckMessage : CanisterAckMessageContent;
 		#KeepAliveMessage : ClientKeepAliveMessageContent;
 	};
-	let WebsocketServiceMessageIdl : CandidType = #variant([
-		{
-			tag = #name("OpenMessage");
-			type_ = CanisterOpenMessageContentIdl;
-		},
-		{
-			tag = #name("AckMessage");
-			type_ = CanisterAckMessageContentIdl;
-		},
-		{
-			tag = #name("KeepAliveMessage");
-			type_ = ClientKeepAliveMessageContentIdl;
-		},
-	]);
 	func encode_websocket_service_message_content(content : WebsocketServiceMessageContent) : Blob {
-		let value : CandidValue = switch (content) {
-			case (#OpenMessage(open_content)) {
-				#variant({
-					tag = #name("OpenMessage");
-					value = #record([{
-						tag = #name("client_key");
-						value = #record([
-							{
-								tag = #name("client_principal");
-								value = #principal(open_content.client_key.client_principal);
-							},
-							{
-								tag = #name("client_nonce");
-								value = #nat64(open_content.client_key.client_nonce);
-							},
-						]);
-					}]);
-				});
-			};
-			case (#AckMessage(ack_content)) {
-				#variant({
-					tag = #name("AckMessage");
-					value = #record([{
-						tag = #name("last_incoming_sequence_num");
-						value = #nat64(ack_content.last_incoming_sequence_num);
-					}]);
-				});
-			};
-			case (#KeepAliveMessage(keep_alive_content)) {
-				#variant({
-					tag = #name("KeepAliveMessage");
-					value = #record([{
-						tag = #name("last_incoming_sequence_num");
-						value = #nat64(keep_alive_content.last_incoming_sequence_num);
-					}]);
-				});
-			};
-		};
-		let args : [Arg.Arg] = [{
-			type_ = WebsocketServiceMessageIdl;
-			value;
-		}];
-
-		Encoder.encode(args);
+		to_candid (content);
 	};
 	func decode_websocket_service_message_content(bytes : Blob) : Result<WebsocketServiceMessageContent, Text> {
-		let args : [Arg.Arg] = switch (Decoder.decode(bytes)) {
-			case (null) {
-				return #Err("Error decoding service message content: decoder returned null value");
-			};
-			case (?args) {
-				args;
-			};
-		};
-
-		if (Array.size(args) != 1) {
-			return #Err("invalid number of arguments");
-		};
-
-		let arg = args[0];
-		switch (arg.value) {
-			case (#variant(content)) {
-				switch (content.value) {
-					case (#record(variant_content)) {
-						if (Tag.equal(content.tag, #name("OpenMessage"))) {
-							let open_message_content : WebsocketServiceMessageContent = #OpenMessage({
-								client_key = do {
-									let client_key_record = Array.find(
-										variant_content,
-										func(rec : Value.RecordFieldValue) : Bool = Tag.equal(rec.tag, #name("client_key")),
-									);
-									switch (client_key_record) {
-										case (?client_key_record) {
-											switch (client_key_record.value) {
-												case (#record(client_key)) {
-													let client_principal_field = Array.find(
-														client_key,
-														func(rec : Value.RecordFieldValue) : Bool = Tag.equal(rec.tag, #name("client_principal")),
-													);
-													let client_nonce_field = Array.find(
-														client_key,
-														func(rec : Value.RecordFieldValue) : Bool = Tag.equal(rec.tag, #name("client_nonce")),
-													);
-													switch ((client_principal_field, client_nonce_field)) {
-														case ((?client_principal, ?client_nonce)) {
-															switch ((client_principal.value, client_nonce.value)) {
-																case ((#principal(client_principal), #nat64(client_nonce))) {
-																	{
-																		client_principal;
-																		client_nonce;
-																	};
-																};
-																case (invalid_arg) {
-																	return #Err("invalid argument: " # debug_show (invalid_arg));
-																};
-															};
-														};
-														case (invalid_arg) {
-															return #Err("invalid argument: " # debug_show (invalid_arg));
-														};
-													};
-												};
-												case (invalid_arg) {
-													return #Err("invalid argument: " # debug_show (invalid_arg));
-												};
-											};
-										};
-										case (_) {
-											return #Err("missing field `client_key`");
-										};
-									};
-								};
-							});
-
-							return #Ok(open_message_content);
-						} else if (Tag.equal(content.tag, #name("AckMessage"))) {
-							let ack_message_content : WebsocketServiceMessageContent = #AckMessage({
-								last_incoming_sequence_num = do {
-									let last_incoming_record = Array.find(
-										variant_content,
-										func(rec : Value.RecordFieldValue) : Bool = Tag.equal(rec.tag, #name("last_incoming_sequence_num")),
-									);
-									switch (last_incoming_record) {
-										case (?last_incoming_record) {
-											switch (last_incoming_record.value) {
-												case (#nat64(last_incoming_sequence_num)) {
-													last_incoming_sequence_num;
-												};
-												case (invalid_arg) {
-													return #Err("invalid argument: " # debug_show (invalid_arg));
-												};
-											};
-										};
-										case (_) {
-											return #Err("missing field `last_incoming_sequence_num`");
-										};
-									};
-								};
-							});
-
-							return #Ok(ack_message_content);
-						} else if (Tag.equal(content.tag, #name("KeepAliveMessage"))) {
-							let keep_alive_message_content : WebsocketServiceMessageContent = #KeepAliveMessage({
-								last_incoming_sequence_num = do {
-									let last_incoming_record = Array.find(
-										variant_content,
-										func(rec : Value.RecordFieldValue) : Bool = Tag.equal(rec.tag, #name("last_incoming_sequence_num")),
-									);
-									switch (last_incoming_record) {
-										case (?last_incoming_record) {
-											switch (last_incoming_record.value) {
-												case (#nat64(last_incoming_sequence_num)) {
-													last_incoming_sequence_num;
-												};
-												case (invalid_arg) {
-													return #Err("invalid argument: " # debug_show (invalid_arg));
-												};
-											};
-										};
-										case (_) {
-											return #Err("missing field `last_incoming_sequence_num`");
-										};
-									};
-								};
-							});
-
-							return #Ok(keep_alive_message_content);
-						} else {
-							return #Err("invalid variant tag: " # debug_show (content.tag));
-						};
-					};
-					case (invalid_variant) {
-						return #Err("invalid variant: " # debug_show (invalid_variant));
-					};
-				};
-			};
-			case (invalid_arg) {
-				return #Err("invalid argument: " # debug_show (invalid_arg));
-			};
+		let decoded : ?WebsocketServiceMessageContent = from_candid (bytes); // traps if the bytes are not a valid candid message
+		return switch (decoded) {
+			case (?value) { #Ok(value) };
+			case (null) { #Err("Error decoding service message content: unknown") };
 		};
 	};
 
@@ -513,10 +328,10 @@ module {
 
 	/// Arguments passed to the `on_message` handler.
 	/// The `message` argument is the message received from the client, serialized in Candid.
-	/// To deserialize the message, use [from_candid].
+	/// Use [`from_candid`] to deserialize the message.
 	///
 	/// # Example
-	/// This example is the deserialize equivalent of the [ws_send]'s example serialize one.
+	/// This example is the deserialize equivalent of the [`ws_send`]'s serialize one.
 	/// ```motoko
 	/// import IcWebSocketCdk "mo:ic-websocket-cdk";
 	///
@@ -625,34 +440,41 @@ module {
 
 	/// IC WebSocket class that holds the internal state of the IC WebSocket.
 	///
+	/// Arguments:
+	///
+	/// - `gateway_principals`: An array of the principals of the WS Gateways that are allowed to poll the canister.
+	///
 	/// **Note**: you should only pass an instance of this class to the IcWebSocket class constructor, without using the methods or accessing the fields directly.
-	public class IcWebSocketState(gateway_principal : Text) = self {
+	public class IcWebSocketState(gateway_principals : [Text]) = self {
 		//// STATE ////
 		/// Maps the client's key to the client metadata
-		public var REGISTERED_CLIENTS = HashMap.HashMap<ClientKey, RegisteredClient>(0, areClientKeysEqual, hashClientKey);
+		var REGISTERED_CLIENTS = HashMap.HashMap<ClientKey, RegisteredClient>(0, areClientKeysEqual, hashClientKey);
 		/// Maps the client's principal to the current client key
-		public var CURRENT_CLIENT_KEY_MAP = HashMap.HashMap<ClientPrincipal, ClientKey>(0, Principal.equal, Principal.hash);
+		var CURRENT_CLIENT_KEY_MAP = HashMap.HashMap<ClientPrincipal, ClientKey>(0, Principal.equal, Principal.hash);
 		/// Keeps track of all the clients for which we're waiting for a keep alive message.
-		public var CLIENTS_WAITING_FOR_KEEP_ALIVE : TrieSet.Set<ClientKey> = TrieSet.empty();
+		var CLIENTS_WAITING_FOR_KEEP_ALIVE : TrieSet.Set<ClientKey> = TrieSet.empty();
 		/// Maps the client's public key to the sequence number to use for the next outgoing message (to that client).
-		public var OUTGOING_MESSAGE_TO_CLIENT_NUM_MAP = HashMap.HashMap<ClientKey, Nat64>(0, areClientKeysEqual, hashClientKey);
+		var OUTGOING_MESSAGE_TO_CLIENT_NUM_MAP = HashMap.HashMap<ClientKey, Nat64>(0, areClientKeysEqual, hashClientKey);
 		/// Maps the client's public key to the expected sequence number of the next incoming message (from that client).
-		public var INCOMING_MESSAGE_FROM_CLIENT_NUM_MAP = HashMap.HashMap<ClientKey, Nat64>(0, areClientKeysEqual, hashClientKey);
+		var INCOMING_MESSAGE_FROM_CLIENT_NUM_MAP = HashMap.HashMap<ClientKey, Nat64>(0, areClientKeysEqual, hashClientKey);
 		/// Keeps track of the Merkle tree used for certified queries
-		public var CERT_TREE_STORE : CertTree.Store = CertTree.newStore();
-		public var CERT_TREE = CertTree.Ops(CERT_TREE_STORE);
+		var CERT_TREE_STORE : CertTree.Store = CertTree.newStore();
+		var CERT_TREE = CertTree.Ops(CERT_TREE_STORE);
 		/// Keeps track of the principal of the WS Gateway which polls the canister
-		public var REGISTERED_GATEWAY : RegisteredGateway = RegisteredGateway(Principal.fromText(gateway_principal));
-		/// Keeps track of the messages that have to be sent to the WS Gateway
-		public var MESSAGES_FOR_GATEWAY : List.List<CanisterOutputMessage> = List.nil();
-		/// Keeps track of the nonce which:
-		/// - the WS Gateway uses to specify the first index of the certified messages to be returned when polling
-		/// - the client uses as part of the path in the Merkle tree in order to verify the certificate of the messages relayed by the WS Gateway
-		public var OUTGOING_MESSAGE_NONCE : Nat64 = INITIAL_OUTGOING_MESSAGE_NONCE;
+		var REGISTERED_GATEWAYS = do {
+			let map = HashMap.HashMap<GatewayPrincipal, RegisteredGateway>(0, Principal.equal, Principal.hash);
+
+			for (gateway_principal_text in Iter.fromArray(gateway_principals)) {
+				let gateway_principal = Principal.fromText(gateway_principal_text);
+				map.put(gateway_principal, RegisteredGateway(gateway_principal));
+			};
+
+			map;
+		};
 		/// The acknowledgement active timer.
-		public var ACK_TIMER : ?Timer.TimerId = null;
-		// /// The keep alive active timer.
-		public var KEEP_ALIVE_TIMER : ?Timer.TimerId = null;
+		var ACK_TIMER : ?Timer.TimerId = null;
+		/// The keep alive active timer.
+		var KEEP_ALIVE_TIMER : ?Timer.TimerId = null;
 
 		//// FUNCTIONS ////
 		/// Resets all state to the initial state.
@@ -669,19 +491,32 @@ module {
 			INCOMING_MESSAGE_FROM_CLIENT_NUM_MAP := HashMap.HashMap<ClientKey, Nat64>(0, areClientKeysEqual, hashClientKey);
 			CERT_TREE_STORE := CertTree.newStore();
 			CERT_TREE := CertTree.Ops(CERT_TREE_STORE);
-			MESSAGES_FOR_GATEWAY := List.nil<CanisterOutputMessage>();
-			OUTGOING_MESSAGE_NONCE := INITIAL_OUTGOING_MESSAGE_NONCE;
+			for (g in REGISTERED_GATEWAYS.vals()) {
+				g.reset();
+			};
 		};
 
-		public func get_outgoing_message_nonce() : Nat64 {
-			OUTGOING_MESSAGE_NONCE;
+		public func get_outgoing_message_nonce(gateway_principal : GatewayPrincipal) : Result<Nat64, Text> {
+			switch (get_registered_gateway(gateway_principal)) {
+				case (#Ok(registered_gateway)) {
+					#Ok(registered_gateway.outgoing_message_nonce);
+				};
+				case (#Err(err)) { #Err(err) };
+			};
 		};
 
-		public func increment_outgoing_message_nonce() {
-			OUTGOING_MESSAGE_NONCE += 1;
+		public func increment_outgoing_message_nonce(gateway_principal : GatewayPrincipal) {
+			switch (REGISTERED_GATEWAYS.get(gateway_principal)) {
+				case (?registered_gateway) {
+					registered_gateway.increment_nonce();
+				};
+				case (null) {
+					Prelude.unreachable(); // we should always have a registered gateway at this point
+				};
+			};
 		};
 
-		public func insert_client(client_key : ClientKey, new_client : RegisteredClient) {
+		func insert_client(client_key : ClientKey, new_client : RegisteredClient) {
 			CURRENT_CLIENT_KEY_MAP.put(client_key.client_principal, client_key);
 			REGISTERED_CLIENTS.put(client_key, new_client);
 		};
@@ -705,12 +540,26 @@ module {
 			#Ok;
 		};
 
-		public func add_client_to_wait_for_keep_alive(client_key : ClientKey) {
+		public func get_gateway_principal_from_registered_client(client_key : ClientKey) : GatewayPrincipal {
+			switch (REGISTERED_CLIENTS.get(client_key)) {
+				case (?registered_client) { registered_client.gateway_principal };
+				case (null) {
+					Prelude.unreachable(); // the value exists because we checked that the client is registered
+				};
+			};
+		};
+
+		func add_client_to_wait_for_keep_alive(client_key : ClientKey) {
 			CLIENTS_WAITING_FOR_KEEP_ALIVE := TrieSet.put<ClientKey>(CLIENTS_WAITING_FOR_KEEP_ALIVE, client_key, hashClientKey(client_key), areClientKeysEqual);
 		};
 
-		public func get_registered_gateway_principal() : Principal {
-			REGISTERED_GATEWAY.gateway_principal;
+		public func get_registered_gateway(gateway_principal : GatewayPrincipal) : Result<RegisteredGateway, Text> {
+			switch (REGISTERED_GATEWAYS.get(gateway_principal)) {
+				case (?registered_gateway) { #Ok(registered_gateway) };
+				case (null) {
+					#Err("no gateway registered with principal " # Principal.toText(gateway_principal));
+				};
+			};
 		};
 
 		func init_outgoing_message_to_client_num(client_key : ClientKey) {
@@ -778,7 +627,7 @@ module {
 			});
 		};
 
-		public func get_message_for_gateway_key(gateway_principal : Principal, nonce : Nat64) : Text {
+		public func format_message_for_gateway_key(gateway_principal : Principal, nonce : Nat64) : Text {
 			let nonce_to_text = do {
 				// prints the nonce with 20 padding zeros
 				var nonce_str = Nat64.toText(nonce);
@@ -794,8 +643,21 @@ module {
 			Principal.toText(gateway_principal) # "_" # nonce_to_text;
 		};
 
+		func get_gateway_messages_queue(gateway_principal : Principal) : List.List<CanisterOutputMessage> {
+			switch (REGISTERED_GATEWAYS.get(gateway_principal)) {
+				case (?registered_gateway) {
+					registered_gateway.messages_queue;
+				};
+				case (null) {
+					Prelude.unreachable(); // the value exists because we just checked that the gateway is registered
+				};
+			};
+		};
+
 		func get_messages_for_gateway_range(gateway_principal : Principal, nonce : Nat64, max_number_of_returned_messages : Nat) : (Nat, Nat) {
-			let queue_len = List.size(MESSAGES_FOR_GATEWAY);
+			let messages_queue = get_gateway_messages_queue(gateway_principal);
+
+			let queue_len = List.size(messages_queue);
 
 			if (nonce == 0 and queue_len > 0) {
 				// this is the case in which the poller on the gateway restarted
@@ -810,11 +672,11 @@ module {
 			};
 
 			// smallest key used to determine the first message from the queue which has to be returned to the WS Gateway
-			let smallest_key = get_message_for_gateway_key(gateway_principal, nonce);
+			let smallest_key = format_message_for_gateway_key(gateway_principal, nonce);
 			// partition the queue at the message which has the key with the nonce specified as argument to get_cert_messages
 			let start_index = do {
 				let partitions = List.partition(
-					MESSAGES_FOR_GATEWAY,
+					messages_queue,
 					func(el : CanisterOutputMessage) : Bool {
 						Text.less(el.key, smallest_key);
 					},
@@ -829,16 +691,18 @@ module {
 			(start_index, end_index);
 		};
 
-		func get_messages_for_gateway(start_index : Nat, end_index : Nat) : List.List<CanisterOutputMessage> {
+		func get_messages_for_gateway(gateway_principal : Principal, start_index : Nat, end_index : Nat) : List.List<CanisterOutputMessage> {
+			let messages_queue = get_gateway_messages_queue(gateway_principal);
+
 			var messages : List.List<CanisterOutputMessage> = List.nil();
 			for (i in Iter.range(start_index, end_index - 1)) {
-				let message = List.get(MESSAGES_FOR_GATEWAY, i);
+				let message = List.get(messages_queue, i);
 				switch (message) {
 					case (?message) {
 						messages := List.push(message, messages);
 					};
 					case (null) {
-						// Do nothing
+						Prelude.unreachable(); // the value exists because this function is called only after partitioning the queue
 					};
 				};
 			};
@@ -848,7 +712,7 @@ module {
 
 		public func get_cert_messages(gateway_principal : Principal, nonce : Nat64, max_number_of_returned_messages : Nat) : CanisterWsGetMessagesResult {
 			let (start_index, end_index) = get_messages_for_gateway_range(gateway_principal, nonce, max_number_of_returned_messages);
-			let messages = get_messages_for_gateway(start_index, end_index);
+			let messages = get_messages_for_gateway(gateway_principal, start_index, end_index);
 
 			if (List.isNil(messages)) {
 				return #Ok({
@@ -874,15 +738,16 @@ module {
 		};
 
 		public func is_registered_gateway(principal : Principal) : Bool {
-			Principal.equal(principal, REGISTERED_GATEWAY.gateway_principal);
+			switch (REGISTERED_GATEWAYS.get(principal)) {
+				case (?_) { true };
+				case (null) { false };
+			};
 		};
 
 		/// Checks if the caller of the method is the same as the one that was registered during the initialization of the CDK
 		public func check_is_registered_gateway(input_principal : Principal) : Result<(), Text> {
-			let gateway_principal = get_registered_gateway_principal();
-			// check if the caller is the same as the one that was registered during the initialization of the CDK
-			if (Principal.notEqual(gateway_principal, input_principal)) {
-				return #Err("caller is not the gateway that has been registered during CDK initialization");
+			if (not is_registered_gateway(input_principal)) {
+				return #Err("principal is not one of the authorized gateways that have been registered during CDK initialization");
 			};
 
 			#Ok;
@@ -1027,7 +892,7 @@ module {
 				let client_metadata = REGISTERED_CLIENTS.get(client_key);
 				switch (client_metadata) {
 					case (?client_metadata) {
-						let last_keep_alive = client_metadata.last_keep_alive_timestamp;
+						let last_keep_alive = client_metadata.get_last_keep_alive_timestamp();
 
 						if (get_current_time() - last_keep_alive > keep_alive_timeout_ms * 1_000_000) {
 							await remove_client(client_key, handlers);
@@ -1048,7 +913,7 @@ module {
 			let client = REGISTERED_CLIENTS.get(client_key);
 			switch (client) {
 				case (?client_metadata) {
-					client_metadata.last_keep_alive_timestamp := get_current_time();
+					client_metadata.update_last_keep_alive_timestamp();
 					REGISTERED_CLIENTS.put(client_key, client_metadata);
 				};
 				case (null) {
@@ -1060,6 +925,7 @@ module {
 
 	/// Internal function used to put the messages in the outgoing messages queue and certify them.
 	func _ws_send(ws_state : IcWebSocketState, client_principal : ClientPrincipal, msg_bytes : Blob, is_service_message : Bool) : CanisterWsSendResult {
+		// better to get the client key here to not replicate the same logic across functions
 		let client_key = switch (ws_state.get_client_key_from_principal(client_principal)) {
 			case (#Err(err)) {
 				return #Err(err);
@@ -1080,15 +946,30 @@ module {
 		};
 
 		// get the principal of the gateway that is polling the canister
-		let gateway_principal = ws_state.get_registered_gateway_principal();
+		let gateway_principal = ws_state.get_gateway_principal_from_registered_client(client_key);
+		switch (ws_state.check_is_registered_gateway(gateway_principal)) {
+			case (#Err(err)) {
+				return #Err(err);
+			};
+			case (_) {
+				// do nothing
+			};
+		};
 
 		// the nonce in key is used by the WS Gateway to determine the message to start in the polling iteration
 		// the key is also passed to the client in order to validate the body of the certified message
-		let outgoing_message_nonce = ws_state.get_outgoing_message_nonce();
-		let key = ws_state.get_message_for_gateway_key(gateway_principal, outgoing_message_nonce);
+		let outgoing_message_nonce = switch (ws_state.get_outgoing_message_nonce(gateway_principal)) {
+			case (#Err(err)) {
+				return #Err(err);
+			};
+			case (#Ok(nonce)) {
+				nonce;
+			};
+		};
+		let message_key = ws_state.format_message_for_gateway_key(gateway_principal, outgoing_message_nonce);
 
 		// increment the nonce for the next message
-		ws_state.increment_outgoing_message_nonce();
+		ws_state.increment_outgoing_message_nonce(gateway_principal);
 
 		// increment the sequence number for the next message to the client
 		switch (ws_state.increment_outgoing_message_to_client_num(client_key)) {
@@ -1118,7 +999,7 @@ module {
 		};
 
 		// CBOR serialize message of type WebsocketMessage
-		let content = switch (encode_websocket_message(websocket_message)) {
+		let message_content = switch (encode_websocket_message(websocket_message)) {
 			case (#Err(err)) {
 				return #Err(err);
 			};
@@ -1128,24 +1009,37 @@ module {
 		};
 
 		// certify data
-		ws_state.put_cert_for_message(key, content);
+		ws_state.put_cert_for_message(message_key, message_content);
 
-		ws_state.MESSAGES_FOR_GATEWAY := List.append(
-			ws_state.MESSAGES_FOR_GATEWAY,
-			List.fromArray([{ client_key; content; key }]),
-		);
-
+		switch (ws_state.get_registered_gateway(gateway_principal)) {
+			case (#Ok(registered_gateway)) {
+				// messages in the queue are inserted with contiguous and increasing nonces
+				// (from beginning to end of the queue) as ws_send is called sequentially, the nonce
+				// is incremented by one in each call, and the message is pushed at the end of the queue
+				registered_gateway.messages_queue := List.append(
+					registered_gateway.messages_queue,
+					List.fromArray([{
+						client_key;
+						content = message_content;
+						key = message_key;
+					}]),
+				);
+			};
+			case (_) {
+				Prelude.unreachable(); // the value exists because we just checked that the gateway is registered
+			};
+		};
 		#Ok;
 	};
 
 	/// Sends a message to the client. The message must already be serialized **using Candid**.
-	/// Use [to_candid] to serialize the message.
+	/// Use [`to_candid`] to serialize the message.
 	///
 	/// Under the hood, the message is certified and added to the queue of messages
 	/// that the WS Gateway will poll in the next iteration.
 	///
 	/// # Example
-	/// This example is the serialize equivalent of the [OnMessageCallbackArgs]'s example deserialize one.
+	/// This example is the serialize equivalent of the [`OnMessageCallbackArgs`]'s deserialize one.
 	/// ```motoko
 	/// import IcWebSocketCdk "mo:ic-websocket-cdk";
 	///
@@ -1176,7 +1070,9 @@ module {
 	};
 
 	/// Parameters for the IC WebSocket CDK initialization.
+	///
 	/// Arguments:
+	///
 	/// - `init_handlers`: Handlers initialized by the canister and triggered by the CDK.
 	/// - `init_max_number_of_returned_messages`: Maximum number of returned messages. Defaults to `10` if null.
 	/// - `init_send_ack_interval_ms`: Send ack interval in milliseconds. Defaults to `60_000` (60 seconds) if null.
@@ -1241,6 +1137,7 @@ module {
 		/// The callback handlers for the WebSocket.
 		private var HANDLERS : WsHandlers = params.get_handlers();
 
+		// the equivalent of the [init] function for the Rust CDK
 		do {
 			// check if the parameters are valid
 			params.check_validity();
@@ -1287,7 +1184,7 @@ module {
 			};
 
 			// initialize client maps
-			let new_client = RegisteredClient();
+			let new_client = RegisteredClient(args.gateway_principal);
 			WS_STATE.add_client(client_key, new_client);
 
 			let open_message : CanisterOpenMessageContent = {
@@ -1445,7 +1342,7 @@ module {
 		};
 
 		func handle_received_service_message(client_key : ClientKey, content : Blob) : async Result<(), Text> {
-			let message_content : WebsocketServiceMessageContent = switch (decode_websocket_service_message_content(content)) {
+			let message_content = switch (decode_websocket_service_message_content(content)) {
 				case (#Err(err)) {
 					return #Err(err);
 				};
