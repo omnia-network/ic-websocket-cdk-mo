@@ -252,25 +252,27 @@ module {
       increment_gateway_clients_count(new_client.gateway_principal);
     };
 
+    /// Removes a client from the internal state
+    /// and call the on_close callback,
+    /// if the client was registered in the state.
     public func remove_client(client_key : ClientKey, handlers : WsHandlers) : async () {
       CLIENTS_WAITING_FOR_KEEP_ALIVE := TrieSet.delete(CLIENTS_WAITING_FOR_KEEP_ALIVE, client_key, Types.hashClientKey(client_key), Types.areClientKeysEqual);
       CURRENT_CLIENT_KEY_MAP.delete(client_key.client_principal);
       OUTGOING_MESSAGE_TO_CLIENT_NUM_MAP.delete(client_key);
       INCOMING_MESSAGE_FROM_CLIENT_NUM_MAP.delete(client_key);
 
-      let registered_client = REGISTERED_CLIENTS.remove(client_key);
-      switch (registered_client) {
+      switch (REGISTERED_CLIENTS.remove(client_key)) {
         case (?registered_client) {
           decrement_gateway_clients_count(registered_client.gateway_principal);
+
+          await handlers.call_on_close({
+            client_principal = client_key.client_principal;
+          });
         };
         case (null) {
-          Prelude.unreachable();
+          // Do nothing
         };
       };
-
-      await handlers.call_on_close({
-        client_principal = client_key.client_principal;
-      });
     };
 
     public func format_message_for_gateway_key(gateway_principal : Principal, nonce : Nat64) : Text {
@@ -413,7 +415,7 @@ module {
       };
     };
 
-    /// Deletes the an amount of [MESSAGES_TO_DELETE] messages from the queue
+    /// Deletes the an amount of [MESSAGES_TO_DELETE_COUNT] messages from the queue
     /// that are older than the ack interval.
     func delete_old_messages_for_gateway(gateway_principal : GatewayPrincipal) : Result<(), Text> {
       let ack_interval_ms = init_params.send_ack_interval_ms;

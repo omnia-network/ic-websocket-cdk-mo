@@ -98,6 +98,17 @@ module {
 				};
 			};
 
+			// check if there's a client already registered with the same principal
+			// and remove it if there is
+			switch (WS_STATE.get_client_key_from_principal(client_key.client_principal)) {
+				case (#Err(err)) {
+					// Do nothing
+				};
+				case (#Ok(old_client_key)) {
+					await WS_STATE.remove_client(old_client_key, handlers);
+				};
+			};
+
 			// initialize client maps
 			let new_client = Types.RegisteredClient(args.gateway_principal);
 			WS_STATE.add_client(client_key, new_client);
