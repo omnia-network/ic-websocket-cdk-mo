@@ -11,4 +11,4 @@ export TEST_CANISTER_WASM_PATH="$(pwd)/bin/test_canister.wasm"
 
 cd tests/ic-websocket-cdk-rs
 
-RUST_BACKTRACE=1 cargo test --package ic-websocket-cdk --lib -- tests::integration_tests --test-threads 1
+cargo test --package ic-websocket-cdk --lib -- tests::integration_tests --test-threads 1

@@ -2,9 +2,10 @@ import Array "mo:base/Array";
 import Debug "mo:base/Debug";
 import Nat64 "mo:base/Nat64";
 import IcWebSocketCdk "mo:ic-websocket-cdk";
+import IcWebSocketCdkTypes "mo:ic-websocket-cdk/Types";
+import IcWebSocketCdkState "mo:ic-websocket-cdk/State";
 
 actor class TestCanister(
-  gateway_principals : [Text],
   init_max_number_of_returned_messages : Nat64,
   init_send_ack_interval_ms : Nat64,
   init_keep_alive_timeout_ms : Nat64,
@@ -14,7 +15,13 @@ actor class TestCanister(
     text : Text;
   };
 
-  var ws_state = IcWebSocketCdk.IcWebSocketState(gateway_principals);
+  let params = IcWebSocketCdkTypes.WsInitParams(
+    ?Nat64.toNat(init_max_number_of_returned_messages),
+    ?init_send_ack_interval_ms,
+    ?init_keep_alive_timeout_ms,
+  );
+
+  var ws_state = IcWebSocketCdkState.IcWebSocketState(params);
 
   func on_open(args : IcWebSocketCdk.OnOpenCallbackArgs) : async () {
     Debug.print("Opened websocket: " # debug_show (args.client_principal));
@@ -28,20 +35,13 @@ actor class TestCanister(
     Debug.print("Client " # debug_show (args.client_principal) # " disconnected");
   };
 
-  let handlers = IcWebSocketCdk.WsHandlers(
+  let handlers = IcWebSocketCdkTypes.WsHandlers(
     ?on_open,
     ?on_message,
     ?on_close,
   );
 
-  let params = IcWebSocketCdk.WsInitParams(
-    handlers,
-    ?Nat64.toNat(init_max_number_of_returned_messages),
-    ?init_send_ack_interval_ms,
-    ?init_keep_alive_timeout_ms,
-  );
-
-  var ws = IcWebSocketCdk.IcWebSocket(ws_state, params);
+  var ws = IcWebSocketCdk.IcWebSocket(ws_state, params, handlers);
 
   // method called by the WS Gateway after receiving FirstMessage from the client
   public shared ({ caller }) func ws_open(args : IcWebSocketCdk.CanisterWsOpenArguments) : async IcWebSocketCdk.CanisterWsOpenResult {

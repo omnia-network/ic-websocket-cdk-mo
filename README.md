@@ -2,7 +2,7 @@
 
 [![mops](https://oknww-riaaa-aaaam-qaf6a-cai.raw.ic0.app/badge/mops/ic-websocket-cdk)](https://mops.one/ic-websocket-cdk)
 
-This repository contains the Motoko implementation of IC WebSocket CDK. For more information about IC WebSockets, see [IC WebSocket Gateway](https://github.com/omnia-network/ic-websocket-gateway).
+This repository contains the Motoko implementation of IC WebSocket CDK and is basically a mirror of the [Rust CDK](https://github.com/omnia-network/ic-websocket-cdk-rs). For more information about IC WebSockets, see [IC WebSocket Gateway](https://github.com/omnia-network/ic-websocket-gateway).
 
 ## Installation
 
@@ -14,7 +14,7 @@ mops add ic-websocket-cdk
 
 ## Usage
 
-Refer to the [ic-websockets-pingpong-mo](https://github.com/iamenochchirima/ic-websockets-pingpong-mo) repository for an example of how to use this library.
+Refer to the [ic-websockets-pingpong-mo](https://github.com/iamenochchirima/ic-websockets-pingpong-mo) and/or [ic-websockets-chat-mo](https://github.com/iamenochchirima/ic-websockets-chat-mo) repositories for examples of how to use this library.
 
 ### Candid interface
 In order for the frontend clients and the Gateway to work properly, the canister must expose some specific methods in its Candid interface, between the custom methods that you've implemented for your logic. A valid Candid interface for the canister is the following:
@@ -22,8 +22,8 @@ In order for the frontend clients and the Gateway to work properly, the canister
 ```
 import "./ws_types.did";
 
-// define here your message type
-type MyMessageType = {
+// define your message type here
+type MyMessageType = record {
   some_field : text;
 };
 
@@ -53,7 +53,7 @@ Clone the repo with submodules:
 git clone --recurse-submodules https://github.com/omnia-network/ic-websocket-cdk-mo.git
 ```
 
-Integration tests are imported from the [IC WebSocket Rust CDK](https://github.com/omnia-network/ic-websocket-cdk-rs.git), linked to this repo from the `ic-websocket-cdk-rs` submodule in the [tests](./tests/) folder.
+Integration tests are imported from the [IC WebSocket Rust CDK](https://github.com/omnia-network/ic-websocket-cdk-rs.git), linked to this repo through the [`ic-websocket-cdk-rs`](./tests/ic-websocket-cdk-rs) submodule.
 
 There's a script that runs the integration tests, taking care of installing dependencies and setting up the local environment. To run the script, execute the following command:
 
