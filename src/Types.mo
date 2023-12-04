@@ -282,12 +282,7 @@ module {
       var deleted_keys : List.List<Text> = List.nil();
 
       label f for (_ in Iter.range(0, n - 1)) {
-        let message_to_delete = do {
-          let (m, l) = List.pop(messages_to_delete);
-          messages_to_delete := l;
-          m;
-        };
-        switch (message_to_delete) {
+        switch (List.get(messages_to_delete, 0)) {
           case (?message_to_delete) {
             if ((time - message_to_delete.timestamp) > (message_max_age_ms * 1_000_000)) {
               let deleted_message = do {
@@ -308,6 +303,8 @@ module {
                   Prelude.unreachable();
                 };
               };
+              let (_, l) = List.pop(messages_to_delete);
+              messages_to_delete := l;
             } else {
               // In this case, no messages can be deleted because
               // they're all not older than `message_max_age_ms`.
