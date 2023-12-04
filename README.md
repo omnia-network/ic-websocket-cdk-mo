@@ -22,7 +22,7 @@ In order for the frontend clients and the Gateway to work properly, the canister
 ```
 import "./ws_types.did";
 
-// define here your message type
+// define your message type here
 type MyMessageType = record {
   some_field : text;
 };
