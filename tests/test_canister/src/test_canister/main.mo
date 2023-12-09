@@ -8,7 +8,6 @@ import IcWebSocketCdkState "mo:ic-websocket-cdk/State";
 actor class TestCanister(
   init_max_number_of_returned_messages : Nat64,
   init_send_ack_interval_ms : Nat64,
-  init_keep_alive_timeout_ms : Nat64,
 ) {
 
   type AppMessage = {
@@ -18,7 +17,6 @@ actor class TestCanister(
   let params = IcWebSocketCdkTypes.WsInitParams(
     ?Nat64.toNat(init_max_number_of_returned_messages),
     ?init_send_ack_interval_ms,
-    ?init_keep_alive_timeout_ms,
   );
 
   var ws_state = IcWebSocketCdkState.IcWebSocketState(params);
@@ -65,11 +63,11 @@ actor class TestCanister(
 
   //// Debug/tests methods
   // send a message to the client, usually called by the canister itself
-  public shared func ws_send(client_principal : IcWebSocketCdk.ClientPrincipal, messages : [Blob]) : async IcWebSocketCdk.CanisterWsSendResult {
-    var res : IcWebSocketCdk.CanisterWsSendResult = #Ok;
+  public shared func send(client_principal : IcWebSocketCdk.ClientPrincipal, messages : [Blob]) : async IcWebSocketCdk.CanisterSendResult {
+    var res : IcWebSocketCdk.CanisterSendResult = #Ok;
 
     label f for (msg_bytes in Array.vals(messages)) {
-      switch (await IcWebSocketCdk.ws_send(ws_state, client_principal, msg_bytes)) {
+      switch (await IcWebSocketCdk.send(ws_state, client_principal, msg_bytes)) {
         case (#Ok(value)) {
           // Do nothing
         };
@@ -81,5 +79,12 @@ actor class TestCanister(
     };
 
     return res;
+  };
+
+  // close the connection with a client, usually called by the canister itself
+  public shared func close(client_principal : IcWebSocketCdk.ClientPrincipal) : async IcWebSocketCdk.CanisterCloseResult {
+    await ws.close(client_principal);
+    // or (but doesn't call the on_close callback):
+    // await IcWebSocketCdk.close(ws_state, client_principal);
   };
 };

@@ -21,7 +21,8 @@ import Utils "Utils";
 module {
   type CanisterOutputMessage = Types.CanisterOutputMessage;
   type CanisterWsGetMessagesResult = Types.CanisterWsGetMessagesResult;
-  type CanisterWsSendResult = Types.CanisterWsSendResult;
+  type CanisterCloseResult = Types.CanisterCloseResult;
+  type CanisterSendResult = Types.CanisterSendResult;
   type ClientKey = Types.ClientKey;
   type ClientPrincipal = Types.ClientPrincipal;
   type GatewayPrincipal = Types.GatewayPrincipal;
@@ -68,7 +69,7 @@ module {
     public func reset_internal_state(handlers : WsHandlers) : async () {
       // for each client, call the on_close handler before clearing the map
       for (client_key in REGISTERED_CLIENTS.keys()) {
-        await remove_client(client_key, handlers);
+        await remove_client(client_key, ?handlers, null);
       };
 
       // make sure all the maps are cleared
@@ -96,18 +97,38 @@ module {
       };
     };
 
-    /// Decrements the clients connected count for the given gateway.
-    /// If there are no more clients connected, the gateway is removed from the list of registered gateways.
-    func decrement_gateway_clients_count(gateway_principal : GatewayPrincipal) {
-      switch (REGISTERED_GATEWAYS.get(gateway_principal)) {
-        case (?registered_gateway) {
+    /// Decrements the clients connected count for the given gateway, if it exists.
+    ///
+    /// If `remove_if_empty` is true, the gateway is removed from the list of registered gateways
+    /// if it has no clients connected.
+    func decrement_gateway_clients_count(gateway_principal : GatewayPrincipal, remove_if_empty : Bool) {
+      let messages_keys_to_delete = Option.map(
+        REGISTERED_GATEWAYS.get(gateway_principal),
+        func(registered_gateway : RegisteredGateway) : ?List.List<Text> {
           let clients_count = registered_gateway.decrement_clients_count();
-          if (clients_count == 0) {
-            REGISTERED_GATEWAYS.delete(gateway_principal);
+          if (remove_if_empty and clients_count == 0) {
+            let g = REGISTERED_GATEWAYS.remove(gateway_principal);
+
+            return switch (g) {
+              case (?registered_gateway) {
+                ?List.map(registered_gateway.messages_queue, func(m : CanisterOutputMessage) : Text { m.key });
+              };
+              case (null) {
+                Prelude.unreachable();
+              };
+            };
           };
+
+          null;
+        },
+      );
+
+      switch (Option.flatten(messages_keys_to_delete)) {
+        case (?keys) {
+          delete_keys_from_cert_tree(keys);
         };
         case (null) {
-          Prelude.unreachable(); // gateway must be registered at this point
+          // Do nothing
         };
       };
     };
@@ -253,9 +274,25 @@ module {
     };
 
     /// Removes a client from the internal state
-    /// and call the on_close callback,
+    /// and call the on_close callback (if handlers are provided),
     /// if the client was registered in the state.
-    public func remove_client(client_key : ClientKey, handlers : WsHandlers) : async () {
+    ///
+    /// If a `close_reason` is provided, it also sends a close message to the client,
+    /// so that the client can close the WS connection with the gateway.
+    ///
+    /// If a `close_reason` is **not** provided, it also removes the gateway from the state
+    /// if it has no clients connected anymore.
+    public func remove_client(client_key : ClientKey, handlers : ?WsHandlers, close_reason : ?Types.CloseMessageReason) : async () {
+      switch (close_reason) {
+        case (?close_reason) {
+          // ignore the error
+          ignore send_service_message_to_client(client_key, #CloseMessage({ reason = close_reason }));
+        };
+        case (null) {
+          // Do nothing
+        };
+      };
+
       CLIENTS_WAITING_FOR_KEEP_ALIVE := TrieSet.delete(CLIENTS_WAITING_FOR_KEEP_ALIVE, client_key, Types.hashClientKey(client_key), Types.areClientKeysEqual);
       CURRENT_CLIENT_KEY_MAP.delete(client_key.client_principal);
       OUTGOING_MESSAGE_TO_CLIENT_NUM_MAP.delete(client_key);
@@ -263,11 +300,21 @@ module {
 
       switch (REGISTERED_CLIENTS.remove(client_key)) {
         case (?registered_client) {
-          decrement_gateway_clients_count(registered_client.gateway_principal);
+          decrement_gateway_clients_count(
+            registered_client.gateway_principal,
+            Option.isNull(close_reason),
+          );
 
-          await handlers.call_on_close({
-            client_principal = client_key.client_principal;
-          });
+          switch (handlers) {
+            case (?handlers) {
+              await handlers.call_on_close({
+                client_principal = client_key.client_principal;
+              });
+            };
+            case (null) {
+              // Do nothing
+            };
+          };
         };
         case (null) {
           // Do nothing
@@ -406,7 +453,7 @@ module {
       switch (get_registered_gateway(gateway_principal)) {
         case (#Ok(registered_gateway)) {
           // messages in the queue are inserted with contiguous and increasing nonces
-          // (from beginning to end of the queue) as ws_send is called sequentially, the nonce
+          // (from beginning to end of the queue) as `send` is called sequentially, the nonce
           // is incremented by one in each call, and the message is pushed at the end of the queue
           registered_gateway.add_message_to_queue(message, message_timestamp);
           #Ok;
@@ -426,11 +473,21 @@ module {
         case (#Err(err)) { return #Err(err) };
       };
 
-      for (key in Iter.fromList(deleted_messages_keys)) {
-        CERT_TREE.delete([Text.encodeUtf8(key)]);
-      };
+      delete_keys_from_cert_tree(deleted_messages_keys);
 
       #Ok;
+    };
+
+    func delete_keys_from_cert_tree(keys : List.List<Text>) {
+      let root_hash = do {
+        for (key in Iter.fromList(keys)) {
+          CERT_TREE.delete([Text.encodeUtf8(key)]);
+        };
+        labeledHash(Constants.LABEL_WEBSOCKET, CERT_TREE.treeHash());
+      };
+
+      // certify data with the new root hash
+      CertifiedData.set(root_hash);
     };
 
     func get_cert_for_range(keys : Iter.Iter<CertTree.Path>) : (Blob, Blob) {
@@ -485,7 +542,7 @@ module {
     };
 
     /// Internal function used to put the messages in the outgoing messages queue and certify them.
-    public func _ws_send(client_key : ClientKey, msg_bytes : Blob, is_service_message : Bool) : CanisterWsSendResult {
+    public func _ws_send(client_key : ClientKey, msg_bytes : Blob, is_service_message : Bool) : CanisterSendResult {
       // get the registered client if it exists
       let registered_client = switch (get_registered_client(client_key)) {
         case (#Err(err)) {
@@ -579,7 +636,7 @@ module {
       );
     };
 
-    public func _ws_send_to_client_principal(client_principal : ClientPrincipal, msg_bytes : Blob) : CanisterWsSendResult {
+    public func _ws_send_to_client_principal(client_principal : ClientPrincipal, msg_bytes : Blob) : CanisterSendResult {
       let client_key = switch (get_client_key_from_principal(client_principal)) {
         case (#Err(err)) {
           return #Err(err);
@@ -589,6 +646,21 @@ module {
         };
       };
       _ws_send(client_key, msg_bytes, false);
+    };
+
+    public func _close_for_client_principal(client_principal : ClientPrincipal, handlers : ?WsHandlers) : async CanisterCloseResult {
+      let client_key = switch (get_client_key_from_principal(client_principal)) {
+        case (#Err(err)) {
+          return #Err(err);
+        };
+        case (#Ok(client_key)) {
+          client_key;
+        };
+      };
+
+      await remove_client(client_key, handlers, ? #ClosedByApplication);
+
+      #Ok;
     };
   };
 };
