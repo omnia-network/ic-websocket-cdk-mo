@@ -10,6 +10,7 @@ import Nat64 "mo:base/Nat64";
 import Text "mo:base/Text";
 import Blob "mo:base/Blob";
 import CertifiedData "mo:base/CertifiedData";
+import Buffer "mo:base/Buffer";
 import CertTree "mo:ic-certification/CertTree";
 import Sha256 "mo:sha2/Sha256";
 
@@ -59,6 +60,8 @@ module {
     var CERT_TREE = CertTree.Ops(CERT_TREE_STORE);
     /// Keeps track of the principals of the WS Gateways that poll the canister.
     var REGISTERED_GATEWAYS = HashMap.HashMap<GatewayPrincipal, RegisteredGateway>(0, Principal.equal, Principal.hash);
+    /// Keeps track of the gateways that must be removed from the list of registered gateways in the next ack interval
+    var GATEWAYS_TO_REMOVE = HashMap.HashMap<GatewayPrincipal, Types.TimestampNs>(0, Principal.equal, Principal.hash);
     /// The acknowledgement active timer.
     public var ACK_TIMER : ?Timer.TimerId = null;
     /// The keep alive active timer.
@@ -80,11 +83,14 @@ module {
       CERT_TREE_STORE := CertTree.newStore();
       CERT_TREE := CertTree.Ops(CERT_TREE_STORE);
       REGISTERED_GATEWAYS := HashMap.HashMap<GatewayPrincipal, RegisteredGateway>(0, Principal.equal, Principal.hash);
+      GATEWAYS_TO_REMOVE := HashMap.HashMap<GatewayPrincipal, Types.TimestampNs>(0, Principal.equal, Principal.hash);
     };
 
     /// Increments the clients connected count for the given gateway.
     /// If the gateway is not registered, a new entry is created with a clients connected count of 1.
     func increment_gateway_clients_count(gateway_principal : GatewayPrincipal) {
+      ignore GATEWAYS_TO_REMOVE.remove(gateway_principal);
+
       switch (REGISTERED_GATEWAYS.get(gateway_principal)) {
         case (?registered_gateway) {
           registered_gateway.increment_clients_count();
@@ -99,32 +105,59 @@ module {
 
     /// Decrements the clients connected count for the given gateway, if it exists.
     ///
-    /// If `remove_if_empty` is true, the gateway is removed from the list of registered gateways
-    /// if it has no clients connected.
-    func decrement_gateway_clients_count(gateway_principal : GatewayPrincipal, remove_if_empty : Bool) {
-      let messages_keys_to_delete = Option.map(
-        REGISTERED_GATEWAYS.get(gateway_principal),
-        func(registered_gateway : RegisteredGateway) : ?List.List<Text> {
+    /// If the gateway has no more clients connected, it is added to the [GATEWAYS_TO_REMOVE] map,
+    /// in order to remove it in the next keep alive check.
+    func decrement_gateway_clients_count(gateway_principal : GatewayPrincipal) {
+      switch (REGISTERED_GATEWAYS.get(gateway_principal)) {
+        case (?registered_gateway) {
           let clients_count = registered_gateway.decrement_clients_count();
-          if (remove_if_empty and clients_count == 0) {
-            return Option.map(
-              REGISTERED_GATEWAYS.remove(gateway_principal),
-              func(g : RegisteredGateway) : List.List<Text> {
-                List.map(g.messages_queue, func(m : CanisterOutputMessage) : Text { m.key });
-              },
-            );
-          };
 
-          null;
+          if (clients_count == 0) {
+            GATEWAYS_TO_REMOVE.put(gateway_principal, Utils.get_current_time());
+          };
+        };
+        case (null) {
+          // do nothing
+        };
+      };
+    };
+
+    /// Removes the gateways that were added to the [GATEWAYS_TO_REMOVE] map
+    /// more than the ack interval ms time ago from the list of registered gateways
+    public func remove_empty_expired_gateways() {
+      let ack_interval_ms = init_params.send_ack_interval_ms;
+      let time = Utils.get_current_time();
+
+      let gateway_principals_to_remove : Buffer.Buffer<GatewayPrincipal> = Buffer.Buffer(GATEWAYS_TO_REMOVE.size());
+      GATEWAYS_TO_REMOVE := HashMap.mapFilter(
+        GATEWAYS_TO_REMOVE,
+        Principal.equal,
+        Principal.hash,
+        func(gp : GatewayPrincipal, added_at : Types.TimestampNs) : ?Types.TimestampNs {
+          if (time - added_at > (ack_interval_ms * 1_000_000)) {
+            gateway_principals_to_remove.add(gp);
+            null;
+          } else {
+            ?added_at;
+          };
         },
       );
 
-      switch (Option.flatten(messages_keys_to_delete)) {
-        case (?keys) {
-          delete_keys_from_cert_tree(keys);
-        };
-        case (null) {
-          // Do nothing
+      for (gateway_principal in gateway_principals_to_remove.vals()) {
+        switch (
+          Option.map(
+            REGISTERED_GATEWAYS.remove(gateway_principal),
+            func(g : RegisteredGateway) : List.List<Text> {
+              List.map(g.messages_queue, func(m : CanisterOutputMessage) : Text { m.key });
+            },
+          )
+        ) {
+          case (?messages_keys_to_delete) {
+            delete_keys_from_cert_tree(messages_keys_to_delete);
+          };
+          case (null) {
+            // do nothing
+          };
         };
       };
     };
@@ -275,9 +308,6 @@ module {
     ///
     /// If a `close_reason` is provided, it also sends a close message to the client,
     /// so that the client can close the WS connection with the gateway.
-    ///
-    /// If a `close_reason` is **not** provided, it also removes the gateway from the state
-    /// if it has no clients connected anymore.
     public func remove_client(client_key : ClientKey, handlers : ?WsHandlers, close_reason : ?Types.CloseMessageReason) : async () {
       switch (close_reason) {
         case (?close_reason) {
@@ -296,10 +326,7 @@ module {
 
       switch (REGISTERED_CLIENTS.remove(client_key)) {
         case (?registered_client) {
-          decrement_gateway_clients_count(
-            registered_client.gateway_principal,
-            Option.isNull(close_reason),
-          );
+          decrement_gateway_clients_count(registered_client.gateway_principal);
 
           switch (handlers) {
             case (?handlers) {

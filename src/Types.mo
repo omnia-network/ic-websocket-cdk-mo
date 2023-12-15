@@ -229,8 +229,10 @@ module {
     is_end_of_queue : Bool;
   };
 
+  public type TimestampNs = Nat64;
+
   type MessageToDelete = {
-    timestamp : Nat64;
+    timestamp : TimestampNs;
   };
 
   public type GatewayPrincipal = Principal;
@@ -267,7 +269,7 @@ module {
     };
 
     /// Adds the message to the queue and its metadata to the `messages_to_delete` queue.
-    public func add_message_to_queue(message : CanisterOutputMessage, message_timestamp : Nat64) {
+    public func add_message_to_queue(message : CanisterOutputMessage, message_timestamp : TimestampNs) {
       messages_queue := List.append(
         messages_queue,
         List.fromArray([message]),
@@ -330,11 +332,11 @@ module {
 
   /// The metadata about a registered client.
   public class RegisteredClient(gw_principal : GatewayPrincipal) {
-    public var last_keep_alive_timestamp : Nat64 = Utils.get_current_time();
+    public var last_keep_alive_timestamp : TimestampNs = Utils.get_current_time();
     public let gateway_principal : GatewayPrincipal = gw_principal;
 
     /// Gets the last keep alive timestamp.
-    public func get_last_keep_alive_timestamp() : Nat64 {
+    public func get_last_keep_alive_timestamp() : TimestampNs {
       last_keep_alive_timestamp;
     };
 

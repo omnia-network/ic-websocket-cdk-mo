@@ -114,7 +114,11 @@ module {
 
   /// Checks if the clients for which we are waiting for keep alive have sent a keep alive message.
   /// If a client has not sent a keep alive message, it is removed from the connected clients.
+  ///
+  /// Before checking the clients, it removes all the empty expired gateways from the list of registered gateways.
   func check_keep_alive_timer_callback(ws_state : State.IcWebSocketState, handlers : Types.WsHandlers) : async () {
+    ws_state.remove_empty_expired_gateways();
+
     for (client_key in Array.vals(TrieSet.toArray(ws_state.CLIENTS_WAITING_FOR_KEEP_ALIVE))) {
       // get the last keep alive timestamp for the client and check if it has exceeded the timeout
       switch (ws_state.REGISTERED_CLIENTS.get(client_key)) {
