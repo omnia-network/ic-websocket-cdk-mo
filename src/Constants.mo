@@ -5,11 +5,11 @@ module {
   public let DEFAULT_MAX_NUMBER_OF_RETURNED_MESSAGES : Nat = 50;
   /// The default interval at which to send acknowledgements to the client.
   public let DEFAULT_SEND_ACK_INTERVAL_MS : Nat64 = 300_000; // 5 minutes
-  /// The maximum network latency allowed between the client and the canister.
-  public let MAX_ALLOWED_NETWORK_LATENCY_MS : Nat64 = 30_000; // 30 seconds
+  /// The maximum communication latency allowed between the client and the canister.
+  public let COMMUNICATION_LATENCY_BOUND_MS : Nat64 = 30_000; // 30 seconds
   public class Computed() {
     /// The default timeout to wait for the client to send a keep alive after receiving an acknowledgement.
-    public let CLIENT_KEEP_ALIVE_TIMEOUT_MS : Nat64 = 2 * MAX_ALLOWED_NETWORK_LATENCY_MS;
+    public let CLIENT_KEEP_ALIVE_TIMEOUT_MS : Nat64 = 2 * COMMUNICATION_LATENCY_BOUND_MS;
     /// Same as [CLIENT_KEEP_ALIVE_TIMEOUT_MS], but in nanoseconds.
     public let CLIENT_KEEP_ALIVE_TIMEOUT_NS : Nat64 = CLIENT_KEEP_ALIVE_TIMEOUT_MS * 1_000_000;
   };
