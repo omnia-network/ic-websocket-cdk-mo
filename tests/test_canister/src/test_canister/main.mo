@@ -14,7 +14,7 @@ actor class TestCanister(
     text : Text;
   };
 
-  let params = IcWebSocketCdkTypes.WsInitParams(
+  var params = IcWebSocketCdkTypes.WsInitParams(
     ?Nat64.toNat(init_max_number_of_returned_messages),
     ?init_send_ack_interval_ms,
   );
@@ -86,5 +86,18 @@ actor class TestCanister(
     await ws.close(client_principal);
     // or (but doesn't call the on_close callback):
     // await IcWebSocketCdk.close(ws_state, client_principal);
+  };
+
+  // wipes the internal state
+  public shared func wipe(max_number_of_returned_messages : Nat64, send_ack_interval_ms : Nat64) : async () {
+    // calling ws.wipe() is not necessary here
+    // because the ws_state and ws are reinitialized
+
+    params := IcWebSocketCdkTypes.WsInitParams(
+      ?Nat64.toNat(max_number_of_returned_messages),
+      ?send_ack_interval_ms,
+    );
+    ws_state := IcWebSocketCdkState.IcWebSocketState(params);
+    ws := IcWebSocketCdk.IcWebSocket(ws_state, params, handlers);
   };
 };

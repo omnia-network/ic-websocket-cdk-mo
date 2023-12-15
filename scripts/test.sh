@@ -6,6 +6,7 @@ set -e
 
 ./scripts/build-test-canister.sh
 
+export POCKET_IC_MUTE_SERVER=1
 export POCKET_IC_BIN="$(pwd)/bin/pocket-ic"
 export TEST_CANISTER_WASM_PATH="$(pwd)/bin/test_canister.wasm"
 
