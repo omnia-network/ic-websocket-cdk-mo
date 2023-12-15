@@ -35,6 +35,8 @@ import Errors "Errors";
 module {
 	//// TYPES ////
 	// re-export types
+	public type CanisterCloseResult = Types.CanisterCloseResult;
+	public type CanisterSendResult = Types.CanisterSendResult;
 	public type CanisterWsCloseArguments = Types.CanisterWsCloseArguments;
 	public type CanisterWsCloseResult = Types.CanisterWsCloseResult;
 	public type CanisterWsGetMessagesArguments = Types.CanisterWsGetMessagesArguments;
@@ -43,6 +45,7 @@ module {
 	public type CanisterWsMessageResult = Types.CanisterWsMessageResult;
 	public type CanisterWsOpenArguments = Types.CanisterWsOpenArguments;
 	public type CanisterWsOpenResult = Types.CanisterWsOpenResult;
+	/// @deprecated Use [`CanisterSendResult`] instead.
 	public type CanisterWsSendResult = Types.CanisterWsSendResult;
 	public type ClientPrincipal = Types.ClientPrincipal;
 	public type OnCloseCallbackArgs = Types.OnCloseCallbackArgs;
@@ -73,7 +76,7 @@ module {
 			Timers.cancel_timers(WS_STATE);
 
 			// schedule a timer that will send an acknowledgement message to clients
-			Timers.schedule_send_ack_to_clients(WS_STATE, params.send_ack_interval_ms, params.keep_alive_timeout_ms, handlers);
+			Timers.schedule_send_ack_to_clients(WS_STATE, params.send_ack_interval_ms, handlers);
 		};
 
 		/// Handles the WS connection open event sent by the client and relayed by the Gateway.
@@ -105,7 +108,7 @@ module {
 					// Do nothing
 				};
 				case (#Ok(old_client_key)) {
-					await WS_STATE.remove_client(old_client_key, handlers);
+					await WS_STATE.remove_client(old_client_key, ?handlers, null);
 				};
 			};
 
@@ -134,6 +137,9 @@ module {
 		};
 
 		/// Handles the WS connection close event received from the WS Gateway.
+		///
+		/// If you want to close the connection with the client in your logic,
+		/// use the [close] function instead.
 		public func ws_close(caller : Principal, args : CanisterWsCloseArguments) : async CanisterWsCloseResult {
 			let gateway_principal = caller;
 
@@ -167,7 +173,7 @@ module {
 				};
 			};
 
-			await WS_STATE.remove_client(args.client_key, handlers);
+			await WS_STATE.remove_client(args.client_key, ?handlers, null);
 
 			#Ok;
 		};
@@ -233,7 +239,7 @@ module {
 
 			// check if the incoming message has the expected sequence number
 			if (sequence_num != expected_sequence_num) {
-				await WS_STATE.remove_client(client_key, handlers);
+				await WS_STATE.remove_client(client_key, ?handlers, ? #WrongSequenceNumber);
 				return #Err(Errors.to_string(#IncomingSequenceNumberWrong({ expected_sequence_num; actual_sequence_num = sequence_num })));
 			};
 			// increase the expected sequence number by 1
@@ -267,9 +273,16 @@ module {
 			WS_STATE.get_cert_messages(caller, args.nonce, params.max_number_of_returned_messages);
 		};
 
-		/// Sends a message to the client. See [IcWebSocketCdk.ws_send] function for reference.
+		/// Sends a message to the client. See [IcWebSocketCdk.send] function for reference.
 		public func send(client_principal : ClientPrincipal, msg_bytes : Blob) : async CanisterWsSendResult {
 			WS_STATE._ws_send_to_client_principal(client_principal, msg_bytes);
+		};
+
+		/// Closes the connection with the client.
+		///
+		/// This function **must not** be called in the `on_close` callback.
+		public func close(client_principal : ClientPrincipal) : async CanisterCloseResult {
+			await WS_STATE._close_for_client_principal(client_principal, ?handlers);
 		};
 
 		/// Resets the internal state of the IC WebSocket CDK.
@@ -307,10 +320,24 @@ module {
 	///     some_field: "Hello, World!";
 	///   };
 	///
-	///   IcWebSocketCdk.ws_send(ws_state, client_principal, to_candid(msg));
+	///   IcWebSocketCdk.send(ws_state, client_principal, to_candid(msg));
 	/// }
 	/// ```
-	public func ws_send(ws_state : IcWebSocketState, client_principal : ClientPrincipal, msg_bytes : Blob) : async CanisterWsSendResult {
+	public func send(ws_state : IcWebSocketState, client_principal : ClientPrincipal, msg_bytes : Blob) : async CanisterSendResult {
 		ws_state._ws_send_to_client_principal(client_principal, msg_bytes);
+	};
+
+	/// @deprecated Use [`send`] instead.
+	public func ws_send(ws_state : IcWebSocketState, client_principal : ClientPrincipal, msg_bytes : Blob) : async CanisterWsSendResult {
+		await send(ws_state, client_principal, msg_bytes);
+	};
+
+	/// Closes the connection with the client.
+	/// It can be used in a similar way as the [`IcWebSocketCdk.send`] function.
+	///
+	/// This function **must not** be called in the `on_close` callback
+	/// and **doesn't** trigger the `on_close` callback.
+	public func close(ws_state : IcWebSocketState, client_principal : ClientPrincipal) : async CanisterCloseResult {
+		await ws_state._close_for_client_principal(client_principal, null);
 	};
 };

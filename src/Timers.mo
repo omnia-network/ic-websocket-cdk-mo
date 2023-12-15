@@ -3,6 +3,7 @@ import Nat64 "mo:base/Nat64";
 import Array "mo:base/Array";
 import TrieSet "mo:base/TrieSet";
 
+import Constants "Constants";
 import Types "Types";
 import State "State";
 import Utils "Utils";
@@ -49,13 +50,13 @@ module {
   ///
   /// The interval callback is [send_ack_to_clients_timer_callback]. After the callback is executed,
   /// a timer is scheduled to check if the registered clients have sent a keep alive message.
-  public func schedule_send_ack_to_clients(ws_state : State.IcWebSocketState, ack_interval_ms : Nat64, keep_alive_timeout_ms : Nat64, handlers : Types.WsHandlers) {
+  public func schedule_send_ack_to_clients(ws_state : State.IcWebSocketState, ack_interval_ms : Nat64, handlers : Types.WsHandlers) {
     let timer_id = Timer.recurringTimer(
       #nanoseconds(Nat64.toNat(ack_interval_ms * 1_000_000)),
       func() : async () {
         send_ack_to_clients_timer_callback(ws_state, ack_interval_ms);
 
-        schedule_check_keep_alive(ws_state, keep_alive_timeout_ms, handlers);
+        schedule_check_keep_alive(ws_state, handlers);
       },
     );
 
@@ -66,11 +67,11 @@ module {
   /// after receiving an acknowledgement message.
   ///
   /// The timer callback is [check_keep_alive_timer_callback].
-  func schedule_check_keep_alive(ws_state : State.IcWebSocketState, keep_alive_timeout_ms : Nat64, handlers : Types.WsHandlers) {
+  func schedule_check_keep_alive(ws_state : State.IcWebSocketState, handlers : Types.WsHandlers) {
     let timer_id = Timer.setTimer(
-      #nanoseconds(Nat64.toNat(keep_alive_timeout_ms * 1_000_000)),
+      #nanoseconds(Nat64.toNat(Constants.Computed().CLIENT_KEEP_ALIVE_TIMEOUT_NS)),
       func() : async () {
-        await check_keep_alive_timer_callback(ws_state, keep_alive_timeout_ms, handlers);
+        await check_keep_alive_timer_callback(ws_state, handlers);
       },
     );
 
@@ -113,17 +114,21 @@ module {
 
   /// Checks if the clients for which we are waiting for keep alive have sent a keep alive message.
   /// If a client has not sent a keep alive message, it is removed from the connected clients.
-  func check_keep_alive_timer_callback(ws_state : State.IcWebSocketState, keep_alive_timeout_ms : Nat64, handlers : Types.WsHandlers) : async () {
+  ///
+  /// Before checking the clients, it removes all the empty expired gateways from the list of registered gateways.
+  func check_keep_alive_timer_callback(ws_state : State.IcWebSocketState, handlers : Types.WsHandlers) : async () {
+    ws_state.remove_empty_expired_gateways();
+
     for (client_key in Array.vals(TrieSet.toArray(ws_state.CLIENTS_WAITING_FOR_KEEP_ALIVE))) {
       // get the last keep alive timestamp for the client and check if it has exceeded the timeout
       switch (ws_state.REGISTERED_CLIENTS.get(client_key)) {
         case (?client_metadata) {
           let last_keep_alive = client_metadata.get_last_keep_alive_timestamp();
 
-          if (Utils.get_current_time() - last_keep_alive > (keep_alive_timeout_ms * 1_000_000)) {
-            await ws_state.remove_client(client_key, handlers);
+          if (Utils.get_current_time() - last_keep_alive > Constants.Computed().CLIENT_KEEP_ALIVE_TIMEOUT_NS) {
+            await ws_state.remove_client(client_key, ?handlers, ? #KeepAliveTimeout);
 
-            Utils.custom_print("[check-keep-alive-timer-cb]: Client " # Types.clientKeyToText(client_key) # " has not sent a keep alive message in the last " # debug_show (keep_alive_timeout_ms) # " ms and has been removed");
+            Utils.custom_print("[check-keep-alive-timer-cb]: Client " # Types.clientKeyToText(client_key) # " has not sent a keep alive message in the last " # debug_show (Constants.Computed().CLIENT_KEEP_ALIVE_TIMEOUT_MS) # " ms and has been removed");
           };
         };
         case (null) {

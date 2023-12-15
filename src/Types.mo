@@ -45,8 +45,12 @@ module {
   public type CanisterWsMessageResult = Result<(), Text>;
   /// The result of [ws_get_messages].
   public type CanisterWsGetMessagesResult = Result<CanisterOutputCertifiedMessages, Text>;
-  /// The result of [ws_send].
+  /// The result of [send].
+  public type CanisterSendResult = Result<(), Text>;
+  /// @deprecated Use [`CanisterSendResult`] instead.
   public type CanisterWsSendResult = Result<(), Text>;
+  /// The result of [close].
+  public type CanisterCloseResult = Result<(), Text>;
 
   /// The arguments for [ws_open].
   public type CanisterWsOpenArguments = {
@@ -225,8 +229,10 @@ module {
     is_end_of_queue : Bool;
   };
 
+  public type TimestampNs = Nat64;
+
   type MessageToDelete = {
-    timestamp : Nat64;
+    timestamp : TimestampNs;
   };
 
   public type GatewayPrincipal = Principal;
@@ -256,12 +262,14 @@ module {
 
     /// Decrements the connected clients count by 1, returning the new value.
     public func decrement_clients_count() : Nat64 {
-      connected_clients_count -= 1;
+      if (connected_clients_count > 0) {
+        connected_clients_count -= 1;
+      };
       connected_clients_count;
     };
 
     /// Adds the message to the queue and its metadata to the `messages_to_delete` queue.
-    public func add_message_to_queue(message : CanisterOutputMessage, message_timestamp : Nat64) {
+    public func add_message_to_queue(message : CanisterOutputMessage, message_timestamp : TimestampNs) {
       messages_queue := List.append(
         messages_queue,
         List.fromArray([message]),
@@ -324,11 +332,11 @@ module {
 
   /// The metadata about a registered client.
   public class RegisteredClient(gw_principal : GatewayPrincipal) {
-    public var last_keep_alive_timestamp : Nat64 = Utils.get_current_time();
+    public var last_keep_alive_timestamp : TimestampNs = Utils.get_current_time();
     public let gateway_principal : GatewayPrincipal = gw_principal;
 
     /// Gets the last keep alive timestamp.
-    public func get_last_keep_alive_timestamp() : Nat64 {
+    public func get_last_keep_alive_timestamp() : TimestampNs {
       last_keep_alive_timestamp;
     };
 
@@ -350,10 +358,31 @@ module {
     last_incoming_sequence_num : Nat64;
   };
 
+  public type CloseMessageReason = {
+    /// When the canister receives a wrong sequence number from the client.
+    #WrongSequenceNumber;
+    /// When the canister receives an invalid service message from the client.
+    #InvalidServiceMessage;
+    /// When the canister doesn't receive the keep alive message from the client in time.
+    #KeepAliveTimeout;
+    /// When the developer calls the `close` function.
+    #ClosedByApplication;
+  };
+
+  public type CanisterCloseMessageContent = {
+    reason : CloseMessageReason;
+  };
+
+  /// A service message sent by the CDK to the client or vice versa.
   public type WebsocketServiceMessageContent = {
+    /// Message sent by the **canister** when a client opens a connection.
     #OpenMessage : CanisterOpenMessageContent;
+    /// Message sent _periodically_ by the **canister** to the client to acknowledge the messages received.
     #AckMessage : CanisterAckMessageContent;
+    /// Message sent by the **client** in response to an acknowledgement message from the canister.
     #KeepAliveMessage : ClientKeepAliveMessageContent;
+    /// Message sent by the **canister** when it wants to close the connection.
+    #CloseMessage : CanisterCloseMessageContent;
   };
   public func encode_websocket_service_message_content(content : WebsocketServiceMessageContent) : Blob {
     to_candid (content);
@@ -379,7 +408,7 @@ module {
   /// Use [`from_candid`] to deserialize the message.
   ///
   /// # Example
-  /// This example is the deserialize equivalent of the [`ws_send`]'s serialize one.
+  /// This example is the deserialize equivalent of the [`send`]'s serialize one.
   /// ```motoko
   /// import IcWebSocketCdk "mo:ic-websocket-cdk";
   ///
@@ -421,11 +450,19 @@ module {
   public type OnCloseCallbackArgs = {
     client_principal : ClientPrincipal;
   };
-  /// Handler initialized by the canister and triggered by the CDK once the WS Gateway closes the
-  /// IC WebSocket connection.
+  /// Handler initialized by the canister
+  /// and triggered by the CDK once the WS Gateway closes the IC WebSocket connection
+  /// for that client.
+  ///
+  /// Make sure you **don't** call the [close](crate::close) function in this callback.
   public type OnCloseCallback = (OnCloseCallbackArgs) -> async ();
 
   /// Handlers initialized by the canister and triggered by the CDK.
+  ///
+  /// **Note**: if the callbacks that you define here trap for some reason,
+  /// the CDK will disconnect the client with principal `args.client_principal`.
+  /// However, the client **won't** be notified
+  /// until at least the next time it will try to send a message to the canister.
   public class WsHandlers(
     init_on_open : ?OnOpenCallback,
     init_on_message : ?OnMessageCallback,
@@ -438,11 +475,9 @@ module {
     public func call_on_open(args : OnOpenCallbackArgs) : async () {
       switch (on_open) {
         case (?callback) {
-          try {
-            await callback(args);
-          } catch (err) {
-            Utils.custom_print("Error calling on_open handler: " # Error.message(err));
-          };
+          // we don't have to recover from errors here,
+          // we just let the canister trap
+          await callback(args);
         };
         case (null) {
           // Do nothing.
@@ -453,11 +488,8 @@ module {
     public func call_on_message(args : OnMessageCallbackArgs) : async () {
       switch (on_message) {
         case (?callback) {
-          try {
-            await callback(args);
-          } catch (err) {
-            Utils.custom_print("Error calling on_message handler: " # Error.message(err));
-          };
+          // see call_on_open
+          await callback(args);
         };
         case (null) {
           // Do nothing.
@@ -468,11 +500,8 @@ module {
     public func call_on_close(args : OnCloseCallbackArgs) : async () {
       switch (on_close) {
         case (?callback) {
-          try {
-            await callback(args);
-          } catch (err) {
-            Utils.custom_print("Error calling on_close handler: " # Error.message(err));
-          };
+          // see call_on_open
+          await callback(args);
         };
         case (null) {
           // Do nothing.
@@ -485,15 +514,14 @@ module {
   ///
   /// Arguments:
   ///
-  /// - `init_max_number_of_returned_messages`: Maximum number of returned messages. Defaults to `10` if null.
-  /// - `init_send_ack_interval_ms`: Send ack interval in milliseconds. Defaults to `60_000` (60 seconds) if null.
-  /// - `init_keep_alive_timeout_ms`: Keep alive timeout in milliseconds. Defaults to `10_000` (10 seconds) if null.
+  /// - `init_max_number_of_returned_messages`: Maximum number of returned messages. Defaults to `50` if null.
+  /// - `init_send_ack_interval_ms`: Send ack interval in milliseconds. Defaults to `300_000` (5 minutes) if null.
   public class WsInitParams(
     init_max_number_of_returned_messages : ?Nat,
     init_send_ack_interval_ms : ?Nat64,
-    init_keep_alive_timeout_ms : ?Nat64,
   ) = self {
     /// The maximum number of messages to be returned in a polling iteration.
+    ///
     /// Defaults to `50`.
     public var max_number_of_returned_messages : Nat = switch (init_max_number_of_returned_messages) {
       case (?value) { value };
@@ -502,31 +530,22 @@ module {
     /// The interval at which to send an acknowledgement message to the client,
     /// so that the client knows that all the messages it sent have been received by the canister (in milliseconds).
     ///
-    /// Must be greater than `keep_alive_timeout_ms`.
+    /// Must be greater than [`CLIENT_KEEP_ALIVE_TIMEOUT_MS`] (1 minute).
     ///
     /// Defaults to `300_000` (5 minutes).
     public var send_ack_interval_ms : Nat64 = switch (init_send_ack_interval_ms) {
       case (?value) { value };
       case (null) { Constants.DEFAULT_SEND_ACK_INTERVAL_MS };
     };
-    /// The delay to wait for the client to send a keep alive after receiving an acknowledgement (in milliseconds).
-    ///
-    /// Must be lower than `send_ack_interval_ms`.
-    ///
-    /// Defaults to `60_000` (1 minute).
-    public var keep_alive_timeout_ms : Nat64 = switch (init_keep_alive_timeout_ms) {
-      case (?value) { value };
-      case (null) { Constants.DEFAULT_CLIENT_KEEP_ALIVE_TIMEOUT_MS };
-    };
 
     /// Checks the validity of the timer parameters.
-    /// `send_ack_interval_ms` must be greater than `keep_alive_timeout_ms`.
+    /// `send_ack_interval_ms` must be greater than [`CLIENT_KEEP_ALIVE_TIMEOUT_MS`].
     ///
     /// # Traps
-    /// If `send_ack_interval_ms` < `keep_alive_timeout_ms`.
+    /// If `send_ack_interval_ms` <= [`CLIENT_KEEP_ALIVE_TIMEOUT_MS`].
     public func check_validity() {
-      if (keep_alive_timeout_ms > send_ack_interval_ms) {
-        Utils.custom_trap("send_ack_interval_ms must be greater than keep_alive_timeout_ms");
+      if (send_ack_interval_ms <= Constants.Computed().CLIENT_KEEP_ALIVE_TIMEOUT_MS) {
+        Utils.custom_trap("send_ack_interval_ms must be greater than CLIENT_KEEP_ALIVE_TIMEOUT_MS");
       };
     };
 
@@ -537,17 +556,18 @@ module {
       self;
     };
 
+    /// Sets the interval (in milliseconds) at which to send an acknowledgement message
+    /// to the connected clients.
+    ///
+    /// Must be greater than [`CLIENT_KEEP_ALIVE_TIMEOUT_MS`] (1 minute).
+    ///
+    /// # Traps
+    /// If `send_ack_interval_ms` <= [`CLIENT_KEEP_ALIVE_TIMEOUT_MS`]. See [WsInitParams.check_validity].
     public func with_send_ack_interval_ms(
       ms : Nat64
     ) : WsInitParams {
       send_ack_interval_ms := ms;
-      self;
-    };
-
-    public func with_keep_alive_timeout_ms(
-      ms : Nat64
-    ) : WsInitParams {
-      keep_alive_timeout_ms := ms;
+      check_validity();
       self;
     };
   };

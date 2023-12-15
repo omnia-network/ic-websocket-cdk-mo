@@ -25,7 +25,7 @@ jobs:
 
       - uses: aviate-labs/setup-dfx@v0.2.6
         with:
-          dfx-version: 0.15.1
+          dfx-version: 0.15.2
 
       # rust toolchain is needed for integration tests
       - uses: actions-rs/toolchain@v1
@@ -46,6 +46,7 @@ jobs:
 
       - name: Run integration tests
         run: |
+          export POCKET_IC_MUTE_SERVER=1
           export POCKET_IC_BIN="$(pwd)/bin/pocket-ic"
           export TEST_CANISTER_WASM_PATH="$(pwd)/bin/test_canister.wasm"
           cd tests/ic-websocket-cdk-rs
