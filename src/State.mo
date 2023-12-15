@@ -107,16 +107,12 @@ module {
         func(registered_gateway : RegisteredGateway) : ?List.List<Text> {
           let clients_count = registered_gateway.decrement_clients_count();
           if (remove_if_empty and clients_count == 0) {
-            let g = REGISTERED_GATEWAYS.remove(gateway_principal);
-
-            return switch (g) {
-              case (?registered_gateway) {
-                ?List.map(registered_gateway.messages_queue, func(m : CanisterOutputMessage) : Text { m.key });
-              };
-              case (null) {
-                Prelude.unreachable();
-              };
-            };
+            return Option.map(
+              REGISTERED_GATEWAYS.remove(gateway_principal),
+              func(g : RegisteredGateway) : List.List<Text> {
+                List.map(g.messages_queue, func(m : CanisterOutputMessage) : Text { m.key });
+              },
+            );
           };
 
           null;
