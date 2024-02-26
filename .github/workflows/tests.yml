@@ -23,7 +23,7 @@ jobs:
         with:
           node-version: 20
 
-      - uses: aviate-labs/setup-dfx@v0.2.6
+      - uses: dfinity/setup-dfx@main
         with:
           dfx-version: 0.16.1
 
