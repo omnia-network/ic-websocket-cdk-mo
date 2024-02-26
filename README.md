@@ -61,8 +61,6 @@ There's a script that runs the integration tests, taking care of installing depe
 ./scripts/test.sh
 ```
 
-> If you're on **macOS**, you have to manually download the PocketIC binary ([guide](https://github.com/dfinity/pocketic#download)) and place it in the [bin](./bin/) folder.
-
 ## License
 
 MIT License. See [LICENSE](./LICENSE).
