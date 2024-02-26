@@ -21,11 +21,11 @@ jobs:
           submodules: recursive
       - uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 20
 
       - uses: aviate-labs/setup-dfx@v0.2.6
         with:
-          dfx-version: 0.15.2
+          dfx-version: 0.16.1
 
       # rust toolchain is needed for integration tests
       - uses: actions-rs/toolchain@v1
