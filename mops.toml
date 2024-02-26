@@ -1,9 +1,9 @@
 [package]
 name = "ic-websocket-cdk"
-version = "0.3.2"
+version = "0.3.4"
 description = "IC WebSocket Motoko CDK"
 repository = "https://github.com/omnia-network/ic-websocket-cdk-mo"
-keywords = [ "ic", "websocket", "motoko", "cdk" ]
+keywords = ["ic", "websocket", "motoko", "cdk"]
 license = "MIT"
 
 [dependencies]
