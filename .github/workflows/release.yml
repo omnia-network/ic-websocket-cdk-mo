@@ -26,8 +26,6 @@ jobs:
       - uses: dfinity/setup-dfx@main
         with:
           dfx-version: 0.16.1
-        env:
-          DFX_IDENTITY_PEM: ${{ secrets.DFX_IDENTITY_PEM }}
 
       - name: install mops
         run: npm i ic-mops -g
@@ -37,12 +35,12 @@ jobs:
 
       - name: publish on mops
         run: |
-          dfx identity use action
-          mops import-identity --no-encrypt -- "$(dfx identity export action)"
+          mops import-identity --no-encrypt -- "${DFX_IDENTITY_PEM}"
           mops publish
           echo "version=$(cat mops.toml | grep "version =" | cut -d\" -f2)" >> "$GITHUB_OUTPUT"
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          DFX_IDENTITY_PEM: ${{ secrets.DFX_IDENTITY_PEM }}
 
   tag:
     needs: publish
