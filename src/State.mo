@@ -11,6 +11,7 @@ import Text "mo:base/Text";
 import Blob "mo:base/Blob";
 import CertifiedData "mo:base/CertifiedData";
 import Buffer "mo:base/Buffer";
+import Nat8 "mo:base/Nat8";
 import CertTree "mo:ic-certification/CertTree";
 import Sha256 "mo:sha2/Sha256";
 
@@ -454,15 +455,17 @@ module {
       });
     };
 
-    func labeledHash(l : Blob, content : CertTree.Hash) : CertTree.Hash {
+    func labeledHash(l : Blob, content : CertTree.Hash) : Blob {
       let d = Sha256.Digest(#sha256);
-      d.writeBlob("\13ic-hashtree-labeled");
+      let domain_sep : Blob = "ic-hashtree-labeled";
+      d.writeArray([Nat8.fromNat(domain_sep.size())]);
+      d.writeBlob(domain_sep);
       d.writeBlob(l);
       d.writeBlob(content);
       d.sum();
     };
 
-    public func put_cert_for_message(key : Text, value : Blob) {
+    func put_cert_for_message(key : Text, value : Blob) {
       let root_hash = do {
         CERT_TREE.put([Text.encodeUtf8(key)], Sha256.fromBlob(#sha256, value));
         labeledHash(Constants.LABEL_WEBSOCKET, CERT_TREE.treeHash());
