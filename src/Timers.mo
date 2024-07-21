@@ -50,13 +50,13 @@ module {
   ///
   /// The interval callback is [send_ack_to_clients_timer_callback]. After the callback is executed,
   /// a timer is scheduled to check if the registered clients have sent a keep alive message.
-  public func schedule_send_ack_to_clients(ws_state : State.IcWebSocketState, ack_interval_ms : Nat64, handlers : Types.WsHandlers) {
-    let timer_id = Timer.recurringTimer(
+  public func schedule_send_ack_to_clients<system>(ws_state : State.IcWebSocketState, ack_interval_ms : Nat64, handlers : Types.WsHandlers) {
+    let timer_id = Timer.recurringTimer<system>(
       #nanoseconds(Nat64.toNat(ack_interval_ms * 1_000_000)),
       func() : async () {
-        send_ack_to_clients_timer_callback(ws_state, ack_interval_ms);
+        send_ack_to_clients_timer_callback(ws_state);
 
-        schedule_check_keep_alive(ws_state, handlers);
+        schedule_check_keep_alive<system>(ws_state, handlers);
       },
     );
 
@@ -67,8 +67,8 @@ module {
   /// after receiving an acknowledgement message.
   ///
   /// The timer callback is [check_keep_alive_timer_callback].
-  func schedule_check_keep_alive(ws_state : State.IcWebSocketState, handlers : Types.WsHandlers) {
-    let timer_id = Timer.setTimer(
+  func schedule_check_keep_alive<system>(ws_state : State.IcWebSocketState, handlers : Types.WsHandlers) {
+    let timer_id = Timer.setTimer<system>(
       #nanoseconds(Nat64.toNat(Constants.Computed().CLIENT_KEEP_ALIVE_TIMEOUT_NS)),
       func() : async () {
         await check_keep_alive_timer_callback(ws_state, handlers);
@@ -81,7 +81,7 @@ module {
   /// Sends an acknowledgement message to the client.
   /// The message contains the current incoming message sequence number for that client,
   /// so that the client knows that all the messages it sent have been received by the canister.
-  func send_ack_to_clients_timer_callback(ws_state : State.IcWebSocketState, ack_interval_ms : Nat64) {
+  func send_ack_to_clients_timer_callback(ws_state : State.IcWebSocketState) {
     for (client_key in ws_state.REGISTERED_CLIENTS.keys()) {
       // ignore the error, which shouldn't happen since the client is registered and the sequence number is initialized
       switch (ws_state.get_expected_incoming_message_from_client_num(client_key)) {
