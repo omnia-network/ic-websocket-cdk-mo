@@ -1,30 +1,6 @@
 /// IC WebSocket CDK Motoko Library
 
-import Array "mo:base/Array";
-import Blob "mo:base/Blob";
-import CertifiedData "mo:base/CertifiedData";
-import Debug "mo:base/Debug";
-import Deque "mo:base/Deque";
-import HashMap "mo:base/HashMap";
-import Hash "mo:base/Hash";
-import Iter "mo:base/Iter";
-import List "mo:base/List";
-import Nat64 "mo:base/Nat64";
-import Option "mo:base/Option";
-import Prelude "mo:base/Prelude";
 import Principal "mo:base/Principal";
-import Text "mo:base/Text";
-import Time "mo:base/Time";
-import Timer "mo:base/Timer";
-import Bool "mo:base/Bool";
-import Error "mo:base/Error";
-import TrieSet "mo:base/TrieSet";
-import Result "mo:base/Result";
-import CborValue "mo:cbor/Value";
-import CborDecoder "mo:cbor/Decoder";
-import CborEncoder "mo:cbor/Encoder";
-import CertTree "mo:ic-certification/CertTree";
-import Sha256 "mo:sha2/Sha256";
 
 import State "State";
 import Types "Types";
@@ -45,8 +21,6 @@ module {
 	public type CanisterWsMessageResult = Types.CanisterWsMessageResult;
 	public type CanisterWsOpenArguments = Types.CanisterWsOpenArguments;
 	public type CanisterWsOpenResult = Types.CanisterWsOpenResult;
-	/// @deprecated Use [`CanisterSendResult`] instead.
-	public type CanisterWsSendResult = Types.CanisterWsSendResult;
 	public type ClientPrincipal = Types.ClientPrincipal;
 	public type OnCloseCallbackArgs = Types.OnCloseCallbackArgs;
 	public type OnMessageCallbackArgs = Types.OnMessageCallbackArgs;
@@ -59,16 +33,33 @@ module {
 
 	/// The IC WebSocket instance.
 	///
-	/// **Note**: Restarts the acknowledgement timers under the hood.
+	/// To initialize the CDK, use the `init` method.
 	///
-	/// # Traps
-	/// If the parameters are invalid. See [`WsInitParams::check_validity`] for more details.
+	/// # Example
+	/// ```motoko
+	/// import IcWebSocketCdk "mo:ic-websocket-cdk";
+	///
+	/// actor MyCanister {
+	///   // ...
+	///
+	///   // initialize the CDK
+	///   let ws = IcWebSocketCdk.IcWebSocket(ws_state, params, handlers);
+	///   ws.init<system>();
+	///
+	///   // declare the other ws methods...
+	/// }
+	/// ```
 	public class IcWebSocket(init_ws_state : IcWebSocketState, params : WsInitParams, handlers : WsHandlers) {
 		/// The state of the IC WebSocket.
 		private var WS_STATE : IcWebSocketState = init_ws_state;
 
-		// the equivalent of the [init] function for the Rust CDK
-		do {
+		/// Initialize the CDK.
+		///
+		/// **Note**: Restarts the acknowledgement timers under the hood.
+		///
+		/// # Traps
+		/// If the parameters are invalid.
+		public func init<system>() {
 			// check if the parameters are valid
 			params.check_validity();
 
@@ -76,7 +67,7 @@ module {
 			Timers.cancel_timers(WS_STATE);
 
 			// schedule a timer that will send an acknowledgement message to clients
-			Timers.schedule_send_ack_to_clients(WS_STATE, params.send_ack_interval_ms, handlers);
+			Timers.schedule_send_ack_to_clients<system>(WS_STATE, params.send_ack_interval_ms, handlers);
 		};
 
 		/// Handles the WS connection open event sent by the client and relayed by the Gateway.
@@ -93,7 +84,7 @@ module {
 			// check if client is not registered yet
 			// by swapping the result of the check_registered_client_exists function
 			switch (WS_STATE.check_registered_client_exists(client_key)) {
-				case (#Err(err)) {
+				case (#Err(_)) {
 					// do nothing
 				};
 				case (#Ok(_)) {
@@ -104,7 +95,7 @@ module {
 			// check if there's a client already registered with the same principal
 			// and remove it if there is
 			switch (WS_STATE.get_client_key_from_principal(client_key.client_principal)) {
-				case (#Err(err)) {
+				case (#Err(_)) {
 					// Do nothing
 				};
 				case (#Ok(old_client_key)) {
@@ -206,7 +197,7 @@ module {
 		public func ws_message(caller : Principal, args : CanisterWsMessageArguments, _msg_type : ?Any) : async CanisterWsMessageResult {
 			let client_principal = caller;
 			// check if client registered its principal by calling ws_open
-			let registered_client_key = switch (WS_STATE.get_client_key_from_principal(caller)) {
+			let registered_client_key = switch (WS_STATE.get_client_key_from_principal(client_principal)) {
 				case (#Err(err)) {
 					return #Err(err);
 				};
@@ -218,7 +209,7 @@ module {
 			let {
 				client_key;
 				sequence_num;
-				timestamp;
+				timestamp = _;
 				is_service_message;
 				content;
 			} = args.msg;
@@ -270,11 +261,11 @@ module {
 				return WS_STATE.get_cert_messages_empty();
 			};
 
-			WS_STATE.get_cert_messages(caller, args.nonce, params.max_number_of_returned_messages);
+			WS_STATE.get_cert_messages(gateway_principal, args.nonce, params.max_number_of_returned_messages);
 		};
 
 		/// Sends a message to the client. See [IcWebSocketCdk.send] function for reference.
-		public func send(client_principal : ClientPrincipal, msg_bytes : Blob) : async CanisterWsSendResult {
+		public func send(client_principal : ClientPrincipal, msg_bytes : Blob) : async CanisterSendResult {
 			WS_STATE._ws_send_to_client_principal(client_principal, msg_bytes);
 		};
 
@@ -325,11 +316,6 @@ module {
 	/// ```
 	public func send(ws_state : IcWebSocketState, client_principal : ClientPrincipal, msg_bytes : Blob) : async CanisterSendResult {
 		ws_state._ws_send_to_client_principal(client_principal, msg_bytes);
-	};
-
-	/// @deprecated Use [`send`] instead.
-	public func ws_send(ws_state : IcWebSocketState, client_principal : ClientPrincipal, msg_bytes : Blob) : async CanisterWsSendResult {
-		await send(ws_state, client_principal, msg_bytes);
 	};
 
 	/// Closes the connection with the client.

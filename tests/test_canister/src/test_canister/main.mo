@@ -40,6 +40,7 @@ actor class TestCanister(
   );
 
   var ws = IcWebSocketCdk.IcWebSocket(ws_state, params, handlers);
+  ws.init<system>();
 
   // method called by the WS Gateway after receiving FirstMessage from the client
   public shared ({ caller }) func ws_open(args : IcWebSocketCdk.CanisterWsOpenArguments) : async IcWebSocketCdk.CanisterWsOpenResult {
@@ -68,7 +69,7 @@ actor class TestCanister(
 
     label f for (msg_bytes in Array.vals(messages)) {
       switch (await IcWebSocketCdk.send(ws_state, client_principal, msg_bytes)) {
-        case (#Ok(value)) {
+        case (#Ok(_)) {
           // Do nothing
         };
         case (#Err(error)) {
@@ -99,5 +100,6 @@ actor class TestCanister(
     );
     ws_state := IcWebSocketCdkState.IcWebSocketState(params);
     ws := IcWebSocketCdk.IcWebSocket(ws_state, params, handlers);
+    ws.init<system>();
   };
 };
