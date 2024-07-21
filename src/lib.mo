@@ -1,30 +1,6 @@
 /// IC WebSocket CDK Motoko Library
 
-import Array "mo:base/Array";
-import Blob "mo:base/Blob";
-import CertifiedData "mo:base/CertifiedData";
-import Debug "mo:base/Debug";
-import Deque "mo:base/Deque";
-import HashMap "mo:base/HashMap";
-import Hash "mo:base/Hash";
-import Iter "mo:base/Iter";
-import List "mo:base/List";
-import Nat64 "mo:base/Nat64";
-import Option "mo:base/Option";
-import Prelude "mo:base/Prelude";
 import Principal "mo:base/Principal";
-import Text "mo:base/Text";
-import Time "mo:base/Time";
-import Timer "mo:base/Timer";
-import Bool "mo:base/Bool";
-import Error "mo:base/Error";
-import TrieSet "mo:base/TrieSet";
-import Result "mo:base/Result";
-import CborValue "mo:cbor/Value";
-import CborDecoder "mo:cbor/Decoder";
-import CborEncoder "mo:cbor/Encoder";
-import CertTree "mo:ic-certification/CertTree";
-import Sha256 "mo:sha2/Sha256";
 
 import State "State";
 import Types "Types";
@@ -45,8 +21,6 @@ module {
 	public type CanisterWsMessageResult = Types.CanisterWsMessageResult;
 	public type CanisterWsOpenArguments = Types.CanisterWsOpenArguments;
 	public type CanisterWsOpenResult = Types.CanisterWsOpenResult;
-	/// @deprecated Use [`CanisterSendResult`] instead.
-	public type CanisterWsSendResult = Types.CanisterWsSendResult;
 	public type ClientPrincipal = Types.ClientPrincipal;
 	public type OnCloseCallbackArgs = Types.OnCloseCallbackArgs;
 	public type OnMessageCallbackArgs = Types.OnMessageCallbackArgs;
@@ -274,7 +248,7 @@ module {
 		};
 
 		/// Sends a message to the client. See [IcWebSocketCdk.send] function for reference.
-		public func send(client_principal : ClientPrincipal, msg_bytes : Blob) : async CanisterWsSendResult {
+		public func send(client_principal : ClientPrincipal, msg_bytes : Blob) : async CanisterSendResult {
 			WS_STATE._ws_send_to_client_principal(client_principal, msg_bytes);
 		};
 
@@ -325,11 +299,6 @@ module {
 	/// ```
 	public func send(ws_state : IcWebSocketState, client_principal : ClientPrincipal, msg_bytes : Blob) : async CanisterSendResult {
 		ws_state._ws_send_to_client_principal(client_principal, msg_bytes);
-	};
-
-	/// @deprecated Use [`send`] instead.
-	public func ws_send(ws_state : IcWebSocketState, client_principal : ClientPrincipal, msg_bytes : Blob) : async CanisterWsSendResult {
-		await send(ws_state, client_principal, msg_bytes);
 	};
 
 	/// Closes the connection with the client.

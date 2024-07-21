@@ -25,7 +25,7 @@ jobs:
 
       - uses: dfinity/setup-dfx@main
         with:
-          dfx-version: 0.16.1
+          dfx-version: 0.21.0
 
       # rust toolchain is needed for integration tests
       - uses: actions-rs/toolchain@v1

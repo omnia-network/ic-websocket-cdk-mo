@@ -181,7 +181,7 @@ module {
     public func is_registered_gateway(gateway_principal : GatewayPrincipal) : Bool {
       switch (get_registered_gateway(gateway_principal)) {
         case (#Ok(_)) { true };
-        case (#Err(err)) { false };
+        case (#Err(_)) { false };
       };
     };
 
@@ -366,7 +366,7 @@ module {
         case (#Ok(registered_gateway)) {
           registered_gateway.messages_queue;
         };
-        case (#Err(error)) {
+        case (#Err(_)) {
           // the value exists because we just checked that the gateway is registered
           Prelude.unreachable();
         };

@@ -2,16 +2,12 @@ import Hash "mo:base/Hash";
 import Principal "mo:base/Principal";
 import Text "mo:base/Text";
 import Nat64 "mo:base/Nat64";
-import Bool "mo:base/Bool";
 import List "mo:base/List";
 import Blob "mo:base/Blob";
-import Array "mo:base/Array";
 import Prelude "mo:base/Prelude";
 import Iter "mo:base/Iter";
-import Error "mo:base/Error";
-import CborDecoder "mo:cbor/Decoder";
 import CborEncoder "mo:cbor/Encoder";
-import CborValue "mo:cbor/Value";
+import CborTypes "mo:cbor/Types";
 
 import Constants "Constants";
 import Utils "Utils";
@@ -47,8 +43,6 @@ module {
   public type CanisterWsGetMessagesResult = Result<CanisterOutputCertifiedMessages, Text>;
   /// The result of [send].
   public type CanisterSendResult = Result<(), Text>;
-  /// @deprecated Use [`CanisterSendResult`] instead.
-  public type CanisterWsSendResult = Result<(), Text>;
   /// The result of [close].
   public type CanisterCloseResult = Result<(), Text>;
 
@@ -84,7 +78,7 @@ module {
   /// Encodes the `WebsocketMessage` into a CBOR blob.
   public func encode_websocket_message(websocket_message : WebsocketMessage) : Result<Blob, Text> {
     let principal_blob = Blob.toArray(Principal.toBlob(websocket_message.client_key.client_principal));
-    let cbor_value : CborValue.Value = #majorType5([
+    let cbor_value : CborTypes.Value = #majorType5([
       (#majorType3("client_key"), #majorType5([(#majorType3("client_principal"), #majorType2(principal_blob)), (#majorType3("client_nonce"), #majorType0(websocket_message.client_key.client_nonce))])),
       (#majorType3("sequence_num"), #majorType0(websocket_message.sequence_num)),
       (#majorType3("timestamp"), #majorType0(websocket_message.timestamp)),
@@ -98,112 +92,6 @@ module {
       };
       case (#ok(data)) {
         #Ok(Blob.fromArray(data));
-      };
-    };
-  };
-
-  /// Decodes the CBOR blob into a `WebsocketMessage`.
-  func decode_websocket_message(bytes : Blob) : Result<WebsocketMessage, Text> {
-    switch (CborDecoder.decode(bytes)) {
-      case (#err(err)) {
-        #Err("deserialization failed");
-      };
-      case (#ok(c)) {
-        switch (c) {
-          case (#majorType6({ tag; value })) {
-            switch (value) {
-              case (#majorType5(raw_content)) {
-                #Ok({
-                  client_key = do {
-                    let client_key_key_value = Array.find(raw_content, func((key, _) : (CborValue.Value, CborValue.Value)) : Bool = key == #majorType3("client_key"));
-                    switch (client_key_key_value) {
-                      case (?(_, #majorType5(raw_client_key))) {
-                        let client_principal_value = Array.find(raw_client_key, func((key, _) : (CborValue.Value, CborValue.Value)) : Bool = key == #majorType3("client_principal"));
-                        let client_principal = switch (client_principal_value) {
-                          case (?(_, #majorType2(client_principal_blob))) {
-                            Principal.fromBlob(
-                              Blob.fromArray(client_principal_blob)
-                            );
-                          };
-                          case (_) {
-                            return #Err("missing field `client_key.client_principal`");
-                          };
-                        };
-                        let client_nonce_value = Array.find(raw_client_key, func((key, _) : (CborValue.Value, CborValue.Value)) : Bool = key == #majorType3("client_nonce"));
-                        let client_nonce = switch (client_nonce_value) {
-                          case (?(_, #majorType0(client_nonce))) {
-                            client_nonce;
-                          };
-                          case (_) {
-                            return #Err("missing field `client_key.client_nonce`");
-                          };
-                        };
-
-                        {
-                          client_principal;
-                          client_nonce;
-                        };
-                      };
-                      case (_) {
-                        return #Err("missing field `client_key`");
-                      };
-                    };
-                  };
-                  sequence_num = do {
-                    let sequence_num_key_value = Array.find(raw_content, func((key, _) : (CborValue.Value, CborValue.Value)) : Bool = key == #majorType3("sequence_num"));
-                    switch (sequence_num_key_value) {
-                      case (?(_, #majorType0(sequence_num))) {
-                        sequence_num;
-                      };
-                      case (_) {
-                        return #Err("missing field `sequence_num`");
-                      };
-                    };
-                  };
-                  timestamp = do {
-                    let timestamp_key_value = Array.find(raw_content, func((key, _) : (CborValue.Value, CborValue.Value)) : Bool = key == #majorType3("timestamp"));
-                    switch (timestamp_key_value) {
-                      case (?(_, #majorType0(timestamp))) {
-                        timestamp;
-                      };
-                      case (_) {
-                        return #Err("missing field `timestamp`");
-                      };
-                    };
-                  };
-                  is_service_message = do {
-                    let is_service_message_key_value = Array.find(raw_content, func((key, _) : (CborValue.Value, CborValue.Value)) : Bool = key == #majorType3("is_service_message"));
-                    switch (is_service_message_key_value) {
-                      case (?(_, #majorType7(#bool(is_service_message)))) {
-                        is_service_message;
-                      };
-                      case (_) {
-                        return #Err("missing field `is_service_message`");
-                      };
-                    };
-                  };
-                  content = do {
-                    let content_key_value = Array.find(raw_content, func((key, _) : (CborValue.Value, CborValue.Value)) : Bool = key == #majorType3("message"));
-                    switch (content_key_value) {
-                      case (?(_, #majorType2(content_blob))) {
-                        Blob.fromArray(content_blob);
-                      };
-                      case (_) {
-                        return #Err("missing field `content`");
-                      };
-                    };
-                  };
-                });
-              };
-              case (_) {
-                #Err("invalid CBOR message content");
-              };
-            };
-          };
-          case (_) {
-            #Err("invalid CBOR message content");
-          };
-        };
       };
     };
   };
