@@ -26,7 +26,7 @@ jobs:
 
       - name: publish on mops
         run: |
-          mops import-identity --no-encrypt -- "${DFX_IDENTITY_PEM}"
+          mops user import --no-encrypt -- "${DFX_IDENTITY_PEM}"
           mops publish
         env:
           DFX_IDENTITY_PEM: ${{ secrets.DFX_IDENTITY_PEM }}
